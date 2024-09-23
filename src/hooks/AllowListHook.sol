@@ -21,19 +21,30 @@ contract AllowListHook is IPairHooks, Owned {
         }
     }
 
-    // Also need to factor in new token balance and new NFT balance during calculations
     function afterSwapNFTOutPair(
         uint256 ,
         uint256 ,
         uint256 ,
         uint256[] calldata _nftsOut
     ) external {
+        _checkAllowList(_nftsOut);
+    }
+
+    function afterSwapNFTInPair(
+        uint256 _tokensOut,
+        uint256 _tokensOutProtocolFee,
+        uint256 _tokensOutRoyalty,
+        uint256[] calldata _nftsIn
+    ) external {
+        _checkAllowList(_nftsIn);
+    }
+
+    function _checkAllowList(uint256[] calldata _nfts) internal {
         IERC721 nft = IERC721(LSSVMPair(msg.sender).nft());
         
-        // Assert the desired owner is the owner post-swap
-        for (uint i; i < _nftsOut.length; ++i) {
-            uint256 id = _nftsOut[i];
-            address desiredOwner =allowList[id];
+        for (uint i; i < _nfts.length; ++i) {
+            uint256 id = _nfts[i];
+            address desiredOwner = allowList[id];
             if (nft.ownerOf(id) != desiredOwner) {
                 revert AllowListHook__WrongOwner();
             }
@@ -42,13 +53,6 @@ contract AllowListHook is IPairHooks, Owned {
 
     // Stub implementations after here
     function afterNewPair() external {
-    }
-    function afterSwapNFTInPair(
-        uint256 _tokensOut,
-        uint256 _tokensOutProtocolFee,
-        uint256 _tokensOutRoyalty,
-        uint256[] calldata _nftsIn
-    ) external {
     }
     function afterDeltaUpdate(uint128 _oldDelta, uint128 _newDelta) external {
     }
