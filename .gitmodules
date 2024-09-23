@@ -28,3 +28,6 @@
 [submodule "lib/solady"]
 	path = lib/solady
 	url = https://github.com/vectorized/solady
+[submodule "lib/chainlink-contracts"]
+	path = lib/chainlink-contracts
+	url = https://github.com/smartcontractkit/chainlink/tree/develop/contracts
