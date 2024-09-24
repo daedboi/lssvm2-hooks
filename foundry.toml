@@ -11,6 +11,7 @@ remappings = [
   "clones-with-immutable-args/=lib/clones-with-immutable-args/src/",
   "ds-test/=lib/clones-with-immutable-args/lib/ds-test/src/",
   "forge-std/=lib/forge-std/src/",
+  "@chainlink/contracts/=lib/chainlink-contracts/",
 ]
 verbosity = 1
 auto_detect_remappings = false
