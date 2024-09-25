@@ -87,10 +87,13 @@ contract SudoFactoryWrapper is
     constructor(
         address _factory,
         address _allowListHook,
-        uint256 _minimumLockDuration
+        uint256 _minimumLockDuration,
+        address _sudoWrapper
     ) {
         require(
-            _factory != address(0) && _allowListHook != address(0),
+            _factory != address(0) &&
+                _allowListHook != address(0) &&
+                _sudoWrapper != address(0),
             "Invalid addresses"
         );
         require(
@@ -100,6 +103,7 @@ contract SudoFactoryWrapper is
         factory = LSSVMPairFactory(payable(_factory));
         allowListHook = AllowListHook(_allowListHook);
         minimumLockDuration = _minimumLockDuration;
+        sudoWrapper = _sudoWrapper;
     }
 
     /// @notice Allows the contract to receive ETH.
