@@ -22,9 +22,11 @@ import {ILSSVMPair} from "../ILSSVMPair.sol";
 import {ICurve} from "../bonding-curves/ICurve.sol";
 import {AllowListHook} from "../hooks/AllowListHook.sol";
 
-/// @title SudoFactoryWrapper
-/// @author 0xdaedboi
-/// @notice Wrapper contract for managing SudoSwap v2 pair creation and withdrawals with additional features.
+/**
+ * @title SudoFactoryWrapper
+ * @notice A wrapper contract for managing SudoSwap v2 pair creation and withdrawals with additional features.
+ * @dev This contract provides a higher-level interface for creating and managing SudoSwap pairs, with added lock mechanisms and access control.
+ */
 contract SudoFactoryWrapper is
     Ownable,
     ReentrancyGuard,
@@ -34,36 +36,53 @@ contract SudoFactoryWrapper is
     using SafeTransferLib for address payable;
     using SafeTransferLib for ERC20;
 
-    /// @notice Minimum lock duration for a pair
+    // =========================================
+    // Constants and Immutable Variables
+    // =========================================
+
+    /// @notice Minimum lock duration for a pair (12 hours)
     uint256 public constant MIN_LOCK_DURATION = 12 hours;
+
     /// @notice Factory instance to create pairs
     LSSVMPairFactory public immutable factory;
 
+    // =========================================
+    // State Variables
+    // =========================================
+
     /// @notice Instance of the AllowListHook for managing allowed addresses
     AllowListHook public allowListHook;
-    /// @notice Address of the SudoWrapper contract (for buying and selling NFTs, needs to be whitelisted in AllowListHook)
+
+    /// @notice Address of the SudoWrapper contract (needs to be whitelisted in AllowListHook)
     address public sudoWrapper;
+
     /// @notice Minimum duration that a pair must remain locked
     uint256 public minimumLockDuration;
 
-    /// @notice Struct to store pair information
-    struct PairInfo {
-        /// @notice Pair address
-        address pairAddress;
-        /// @notice Timestamp when the pair will be unlocked
-        uint256 pairUnlockTime;
-        /// @notice Address of the pair creator
-        address pairCreator;
-        /// @notice Whether the pair has been withdrawn from
-        bool hasWithdrawn;
-    }
-
-    /// @notice Mapping to store pair information (address, unlockTime, creator, hasWithdrawn)
+    /// @notice Mapping to store pair information
     mapping(address => PairInfo) public pairInfo;
+
     /// @notice Mapping to store pair addresses created by a user
     mapping(address => address[]) public pairsByCreator;
 
+    /// @notice Mapping to store if an address is a pair
+    mapping(address => bool) public isPair;
+
+    /// @notice Mapping to store if a pair is a random pair (VRF ERC721 buy pool)
+    mapping(address => bool) public isRandomPair;
+
+    /// @notice Struct to store pair information
+    struct PairInfo {
+        address pairAddress; // Pair address
+        uint256 pairUnlockTime; // Timestamp when the pair will be unlocked
+        address pairCreator; // Address of the pair creator
+        bool hasWithdrawn; // Whether the pair has been withdrawn from
+    }
+
+    // =========================================
     // Events
+    // =========================================
+
     event PairCreated(
         address indexed pair,
         address indexed creator,
@@ -80,15 +99,22 @@ contract SudoFactoryWrapper is
     event SudoWrapperUpdated(address newSudoWrapper);
     event MinimumLockDurationUpdated(uint256 newMinimumLockDuration);
 
-    /// @notice Initializes the contract with factory and allow list hook.
-    /// @param _factory Address of the LSSVMPairFactory.
-    /// @param _allowListHook Address of the AllowListHook.
-    /// @param _minimumLockDuration Minimum lock duration for a pair.
+    // =========================================
+    // Constructor
+    // =========================================
+
+    /**
+     * @notice Initializes the contract with factory and allow list hook.
+     * @param _factory Address of the LSSVMPairFactory.
+     * @param _allowListHook Address of the AllowListHook.
+     * @param _minimumLockDuration Minimum lock duration for a pair.
+     * @param _sudoWrapper Address of the SudoWrapper contract.
+     */
     constructor(
         address _factory,
         address _allowListHook,
         uint256 _minimumLockDuration,
-        address _sudoWrapper
+        address payable _sudoWrapper
     ) {
         require(
             _factory != address(0) &&
@@ -106,26 +132,35 @@ contract SudoFactoryWrapper is
         sudoWrapper = _sudoWrapper;
     }
 
-    /// @notice Allows the contract to receive ETH.
+    /**
+     * @notice Allows the contract to receive ETH.
+     */
     receive() external payable {}
 
-    // *************** External Functions *************** //
+    // =========================================
+    // External Functions
+    // =========================================
 
-    /// @notice Creates a new pair with specified parameters.
-    /// @param isBuy Determines if the pair is a buy or sell pair.
-    /// @param _nft Address of the NFT contract.
-    /// @param _token Address of the ERC20 token (use address(0) for ETH).
-    /// @param _bondingCurve Address of the bonding curve contract.
-    /// @param _delta Delta parameter for the bonding curve.
-    /// @param _spotPrice Initial spot price for the pair.
-    /// @param _lockDuration Duration for which the pair is locked.
-    /// @param _initialNFTIDs Array of initial NFT IDs to be added (ERC721).
-    /// @param _initialTokenBalance Initial token balance to be added (ERC20).
-    /// @param _nftId Specific NFT ID for ERC1155 pairs.
-    /// @param _initialNFTBalance Initial NFT balance for ERC1155 pairs.
-    /// @return pairAddress Address of the created pair.
+    /**
+     * @notice Creates a new pair with specified parameters.
+     * @dev Depending on the NFT type (ERC721 or ERC1155) and whether the pair is ETH or ERC20-based, it calls the appropriate internal function.
+     * @param _isBuy Determines if the pair is a buy or sell pair.
+     * @param _isRandom Determines if the pair is a random pair using Chainlink VRF (only for ERC721 buy pools).
+     * @param _nft Address of the NFT contract.
+     * @param _token Address of the ERC20 token (use address(0) for ETH).
+     * @param _bondingCurve Address of the bonding curve contract.
+     * @param _delta Delta parameter for the bonding curve.
+     * @param _spotPrice Initial spot price for the pair.
+     * @param _lockDuration Duration for which the pair is locked.
+     * @param _initialNFTIDs Array of initial NFT IDs to be added (ERC721).
+     * @param _initialTokenBalance Initial token balance to be added (ERC20).
+     * @param _nftId Specific NFT ID for ERC1155 pairs.
+     * @param _initialNFTBalance Initial NFT balance for ERC1155 pairs.
+     * @return pairAddress Address of the created pair.
+     */
     function createPair(
-        bool isBuy,
+        bool _isBuy,
+        bool _isRandom,
         address _nft,
         address _token,
         ICurve _bondingCurve,
@@ -148,12 +183,8 @@ contract SudoFactoryWrapper is
 
         address sender = msg.sender;
         bool isETH = _token == address(0);
-        bool isERC721 = IERC165(_nft).supportsInterface(
-            type(IERC721).interfaceId
-        );
-        bool isERC1155 = IERC165(_nft).supportsInterface(
-            type(IERC1155).interfaceId
-        );
+        bool isERC721 = _supportsInterface(_nft, type(IERC721).interfaceId);
+        bool isERC1155 = _supportsInterface(_nft, type(IERC1155).interfaceId);
 
         require(isERC721 || isERC1155, "Invalid NFT");
 
@@ -162,7 +193,8 @@ contract SudoFactoryWrapper is
             if (isETH) {
                 pairAddress = _createERC721ETHPair(
                     sender,
-                    isBuy,
+                    _isBuy,
+                    _isRandom,
                     _nft,
                     _bondingCurve,
                     _delta,
@@ -173,7 +205,8 @@ contract SudoFactoryWrapper is
             } else {
                 pairAddress = _createERC721ERC20Pair(
                     sender,
-                    isBuy,
+                    _isBuy,
+                    _isRandom,
                     _nft,
                     _bondingCurve,
                     _delta,
@@ -188,7 +221,7 @@ contract SudoFactoryWrapper is
             if (isETH) {
                 pairAddress = _createERC1155ETHPair(
                     sender,
-                    isBuy,
+                    _isBuy,
                     _nft,
                     _bondingCurve,
                     _delta,
@@ -200,7 +233,7 @@ contract SudoFactoryWrapper is
             } else {
                 pairAddress = _createERC1155ERC20Pair(
                     sender,
-                    isBuy,
+                    _isBuy,
                     _nft,
                     _bondingCurve,
                     _delta,
@@ -217,11 +250,13 @@ contract SudoFactoryWrapper is
         return pairAddress;
     }
 
-    /// @notice Withdraws all assets from a specified pair after lock duration.
-    /// @param _pair Address of the pair to withdraw from.
-    /// @return nftIds Array of NFT IDs withdrawn. For ERC1155, only one ID is returned.
-    /// @return amountTokenOrETH Amount of ERC20 or ETH withdrawn.
-    /// @return amountERC1155 Amount of ERC1155 NFTs withdrawn (0 for ERC721).
+    /**
+     * @notice Withdraws all assets from a specified pair after lock duration.
+     * @param _pair Address of the pair to withdraw from.
+     * @return nftIds Array of NFT IDs withdrawn. For ERC1155, only one ID is returned.
+     * @return amountTokenOrETH Amount of ERC20 or ETH withdrawn.
+     * @return amountERC1155 Amount of ERC1155 NFTs withdrawn (0 for ERC721).
+     */
     function withdraw(
         address _pair
     )
@@ -233,72 +268,23 @@ contract SudoFactoryWrapper is
             uint256 amountERC1155
         )
     {
+        require(_pair != address(0) && isPair[_pair], "Invalid pair address");
+
         address sender = msg.sender;
         PairInfo memory info = pairInfo[_pair];
-        LSSVMPair pair = LSSVMPair(_pair); // Basic interface for pair
+        LSSVMPair pair = LSSVMPair(_pair);
         address nft = pair.nft();
 
-        require(_pair != address(0), "Invalid pair address");
         require(sender == info.pairCreator, "Only the creator can withdraw");
         require(info.hasWithdrawn == false, "Pair already withdrawn");
         require(block.timestamp >= info.pairUnlockTime, "Pair is still locked");
 
-        // Withdraw tokens or ETH
-        if (
-            pair.pairVariant() ==
-            ILSSVMPairFactoryLike.PairVariant.ERC721_ETH ||
-            pair.pairVariant() == ILSSVMPairFactoryLike.PairVariant.ERC1155_ETH
-        ) {
-            // Withdraw ETH from pair
-            amountTokenOrETH = address(pair).balance;
-            if (amountTokenOrETH > 0) {
-                LSSVMPairETH(payable(_pair)).withdrawETH(amountTokenOrETH); // Using LSSVMPairETH(_pair) instead of pair to withdraw ETH from pair
-                payable(sender).safeTransferETH(amountTokenOrETH); // Transfer ETH to sender
-            }
-        } else {
-            // Withdraw ERC20 tokens from pair
-            ERC20 token = ILSSVMPair(_pair).token(); // Using ILSSVMPair(_pair) instead of pair to get the token
-            amountTokenOrETH = token.balanceOf(address(pair));
-            if (amountTokenOrETH > 0) {
-                pair.withdrawERC20(token, amountTokenOrETH); // Withdraw ERC20 tokens from pair
-                token.safeTransfer(sender, amountTokenOrETH); // Transfer ERC20 tokens to sender
-            }
-        }
-
-        // Withdraw ERC721 or ERC1155 NFTs
-        if (
-            pair.pairVariant() ==
-            ILSSVMPairFactoryLike.PairVariant.ERC721_ETH ||
-            pair.pairVariant() == ILSSVMPairFactoryLike.PairVariant.ERC721_ERC20
-        ) {
-            // Withdraw ERC721 NFTs
-            nftIds = LSSVMPairERC721(_pair).getAllIds(); // Using LSSVMPairERC721(_pair) instead of pair to get all NFT IDs
-            amountERC1155 = 0; // Not applicable for ERC721
-
-            pair.withdrawERC721(IERC721(nft), nftIds); // Withdraw ERC721 NFTs from pair
-            _transferERC721Tokens(address(this), sender, nft, nftIds); // Transfer ERC721 NFTs to sender
-        } else {
-            // Withdraw ERC1155 NFTs
-            nftIds = new uint256[](1);
-            nftIds[0] = LSSVMPairERC1155(_pair).nftId(); // Using LSSVMPairERC1155(_pair) instead of pair to get the singular NFT ID
-            uint256[] memory amountsERC1155 = new uint256[](1); // Required for params
-            amountsERC1155[0] = IERC1155(nft).balanceOf(
-                address(pair),
-                nftIds[0]
-            );
-            amountERC1155 = amountsERC1155[0]; // For return value + event
-
-            pair.withdrawERC1155(IERC1155(nft), nftIds, amountsERC1155); // Withdraw ERC1155 NFTs from pair
-            IERC1155(nft).safeBatchTransferFrom(
-                address(this),
-                sender,
-                nftIds,
-                amountsERC1155,
-                bytes("")
-            ); // Transfer ERC1155 NFTs to sender
-        }
-
-        pairInfo[_pair].hasWithdrawn = true; // Prevent further withdrawals
+        (nftIds, amountTokenOrETH, amountERC1155) = _withdrawAssets(
+            pair,
+            nft,
+            sender
+        );
+        pairInfo[_pair].hasWithdrawn = true;
 
         emit PairWithdrawal(
             _pair,
@@ -311,8 +297,52 @@ contract SudoFactoryWrapper is
         return (nftIds, amountTokenOrETH, amountERC1155);
     }
 
-    /// @notice Updates the AllowListHook address.
-    /// @param _newAllowListHook The new AllowListHook address.
+    // =========================================
+    // View Functions
+    // =========================================
+
+    /**
+     * @notice Retrieves the unlock time for a specified pair.
+     * @param _pair Address of the pair.
+     * @return The unlock time for the pair.
+     */
+    function getUnlockTime(address _pair) external view returns (uint256) {
+        return pairInfo[_pair].pairUnlockTime;
+    }
+
+    /**
+     * @notice Retrieves the creator of a specified pair.
+     * @param _pair Address of the pair.
+     * @return The creator of the pair.
+     */
+    function getPairCreator(address _pair) external view returns (address) {
+        return pairInfo[_pair].pairCreator;
+    }
+
+    /**
+     * @notice Retrieves all pairs created by a specific creator.
+     * @param _creator Address of the creator.
+     * @return An array of PairInfo structs containing pair details.
+     */
+    function getAllPairsInfoByCreator(
+        address _creator
+    ) external view returns (PairInfo[] memory) {
+        address[] memory pairs = pairsByCreator[_creator];
+        PairInfo[] memory pairsInfo = new PairInfo[](pairs.length);
+        for (uint256 i = 0; i < pairs.length; i++) {
+            pairsInfo[i] = pairInfo[pairs[i]];
+        }
+        return pairsInfo;
+    }
+
+    // =========================================
+    // Admin Functions
+    // =========================================
+
+    /**
+     * @notice Updates the AllowListHook address.
+     * @param _newAllowListHook The new AllowListHook address.
+     */
     function setAllowListHook(address _newAllowListHook) external onlyOwner {
         require(_newAllowListHook != address(0), "Invalid address");
 
@@ -320,75 +350,56 @@ contract SudoFactoryWrapper is
         emit AllowListHookUpdated(_newAllowListHook);
     }
 
-    /// @notice Updates the SudoWrapper address.
-    /// @param _newSudoWrapper The new SudoWrapper address.
-    function setSudoWrapper(address _newSudoWrapper) external onlyOwner {
+    /**
+     * @notice Updates the SudoWrapper address.
+     * @param _newSudoWrapper The new SudoWrapper address.
+     */
+    function setSudoWrapper(
+        address payable _newSudoWrapper
+    ) external onlyOwner {
         require(_newSudoWrapper != address(0), "Invalid address");
 
         sudoWrapper = _newSudoWrapper;
         emit SudoWrapperUpdated(_newSudoWrapper);
     }
 
-    /// @notice Updates the minimum lock duration.
-    /// @param _newMinimumLockDuration The new minimum lock duration.
+    /**
+     * @notice Updates the minimum lock duration.
+     * @param _newMinimumLockDuration The new minimum lock duration.
+     */
     function setMinimumLockDuration(
         uint256 _newMinimumLockDuration
     ) external onlyOwner {
-        require(_newMinimumLockDuration > 12 hours, "Invalid lock duration");
+        require(
+            _newMinimumLockDuration >= MIN_LOCK_DURATION,
+            "Lock duration too short"
+        );
 
         minimumLockDuration = _newMinimumLockDuration;
         emit MinimumLockDurationUpdated(_newMinimumLockDuration);
     }
 
-    // *************** View Functions *************** //
+    // =========================================
+    // Internal Functions
+    // =========================================
 
-    /// @notice Retrieves the unlock time for a specified pair.
-    /// @param _pair Address of the pair.
-    /// @return The unlock time for the pair.
-    function getUnlockTime(address _pair) external view returns (uint256) {
-        return pairInfo[_pair].pairUnlockTime;
-    }
-
-    /// @notice Retrieves the creator of a specified pair.
-    /// @param _pair Address of the pair.
-    /// @return The creator of the pair.
-    function getPairCreator(address _pair) external view returns (address) {
-        return pairInfo[_pair].pairCreator;
-    }
-
-    /// @notice Retrieves all pairs created by a specific creator.
-    /// @param _creator Address of the creator.
-    /// @return An array of PairInfo structs containing pair details.
-    function getAllPairsInfoByCreator(
-        address _creator
-    ) external view returns (PairInfo[] memory) {
-        address[] memory pairs = pairsByCreator[_creator];
-        PairInfo[] memory pairsInfo = new PairInfo[](pairs.length);
-        for (uint256 i = 0; i < pairs.length; ) {
-            pairsInfo[i] = pairInfo[pairs[i]];
-
-            unchecked {
-                ++i;
-            }
-        }
-        return pairsInfo;
-    }
-
-    // *************** Internal Functions *************** //
-
-    /// @notice Creates an ERC721-ETH pair.
-    /// @param _sender Address initiating the pair creation.
-    /// @param _isBuy Determines if the pair is a buy or sell pool.
-    /// @param _nft Address of the ERC721 NFT contract.
-    /// @param _bondingCurve Address of the bonding curve contract.
-    /// @param _delta Delta parameter for the bonding curve.
-    /// @param _spotPrice Initial spot price for the pair.
-    /// @param _lockDuration Duration for which the pair is locked.
-    /// @param _initialNFTIDs Array of initial ERC721 NFT IDs to add.
-    /// @return pairAddress Address of the created pair.
+    /**
+     * @notice Creates an ERC721-ETH pair.
+     * @param _sender Address initiating the pair creation.
+     * @param _isBuy Determines if the pair is a buy or sell pool.
+     * @param _isRandom Determines if the pair is a random pair (only for ERC721 buy pools).
+     * @param _nft Address of the ERC721 NFT contract.
+     * @param _bondingCurve Address of the bonding curve contract.
+     * @param _delta Delta parameter for the bonding curve.
+     * @param _spotPrice Initial spot price for the pair.
+     * @param _lockDuration Duration for which the pair is locked.
+     * @param _initialNFTIDs Array of initial ERC721 NFT IDs to add.
+     * @return pairAddress Address of the created pair.
+     */
     function _createERC721ETHPair(
         address _sender,
         bool _isBuy,
+        bool _isRandom,
         address _nft,
         ICurve _bondingCurve,
         uint128 _delta,
@@ -406,8 +417,8 @@ contract SudoFactoryWrapper is
 
         // Determine pool type
         LSSVMPair.PoolType poolType = _isBuy
-            ? LSSVMPair.PoolType.TOKEN
-            : LSSVMPair.PoolType.NFT;
+            ? LSSVMPair.PoolType.NFT
+            : LSSVMPair.PoolType.TOKEN;
 
         pair = factory.createPairERC721ETH{value: msg.value}(
             IERC721(_nft),
@@ -423,6 +434,9 @@ contract SudoFactoryWrapper is
             address(0)
         );
 
+        // Set random pair if isRandom
+        isRandomPair[address(pair)] = _isBuy && _isRandom;
+
         // Update pair info and emit event
         _finalizePairCreation(
             _sender,
@@ -435,21 +449,25 @@ contract SudoFactoryWrapper is
         return address(pair);
     }
 
-    /// @notice Creates an ERC721-ERC20 pair.
-    /// @param _sender Address initiating the pair creation.
-    /// @param _isBuy Determines if the pair is a buy or sell pool.
-    /// @param _nft Address of the ERC721 NFT contract.
-    /// @param _bondingCurve Address of the bonding curve contract.
-    /// @param _delta Delta parameter for the bonding curve.
-    /// @param _spotPrice Initial spot price for the pair.
-    /// @param _lockDuration Duration for which the pair is locked.
-    /// @param _initialNFTIDs Array of initial ERC721 NFT IDs to add.
-    /// @param _initialTokenBalance Initial ERC20 token balance to add.
-    /// @param _token Address of the ERC20 token.
-    /// @return pairAddress Address of the created pair.
+    /**
+     * @notice Creates an ERC721-ERC20 pair.
+     * @param _sender Address initiating the pair creation.
+     * @param _isBuy Determines if the pair is a buy or sell pool.
+     * @param _isRandom Determines if the pair is a random pair (only for ERC721 buy pools).
+     * @param _nft Address of the ERC721 NFT contract.
+     * @param _bondingCurve Address of the bonding curve contract.
+     * @param _delta Delta parameter for the bonding curve.
+     * @param _spotPrice Initial spot price for the pair.
+     * @param _lockDuration Duration for which the pair is locked.
+     * @param _initialNFTIDs Array of initial ERC721 NFT IDs to add.
+     * @param _initialTokenBalance Initial ERC20 token balance to add.
+     * @param _token Address of the ERC20 token.
+     * @return pairAddress Address of the created pair.
+     */
     function _createERC721ERC20Pair(
         address _sender,
         bool _isBuy,
+        bool _isRandom,
         address _nft,
         ICurve _bondingCurve,
         uint128 _delta,
@@ -479,8 +497,8 @@ contract SudoFactoryWrapper is
 
         // Determine pool type
         LSSVMPair.PoolType poolType = _isBuy
-            ? LSSVMPair.PoolType.TOKEN
-            : LSSVMPair.PoolType.NFT;
+            ? LSSVMPair.PoolType.NFT
+            : LSSVMPair.PoolType.TOKEN;
 
         LSSVMPairFactory.CreateERC721ERC20PairParams
             memory params = LSSVMPairFactory.CreateERC721ERC20PairParams({
@@ -500,6 +518,9 @@ contract SudoFactoryWrapper is
             });
         pair = factory.createPairERC721ERC20(params);
 
+        // Set random pair if isRandom
+        isRandomPair[address(pair)] = _isBuy && _isRandom;
+
         // Update pair info and emit event
         _finalizePairCreation(
             _sender,
@@ -512,17 +533,19 @@ contract SudoFactoryWrapper is
         return address(pair);
     }
 
-    /// @notice Creates an ERC1155-ETH pair.
-    /// @param _sender Address initiating the pair creation.
-    /// @param _isBuy Determines if the pair is a buy or sell pool.
-    /// @param _nft Address of the ERC1155 NFT contract.
-    /// @param _bondingCurve Address of the bonding curve contract.
-    /// @param _delta Delta parameter for the bonding curve.
-    /// @param _spotPrice Initial spot price for the pair.
-    /// @param _lockDuration Duration for which the pair is locked.
-    /// @param _nftId Specific ERC1155 NFT ID to add.
-    /// @param _initialNFTBalance Initial ERC1155 NFT balance to add for that specific _nftId.
-    /// @return pairAddress Address of the created pair.
+    /**
+     * @notice Creates an ERC1155-ETH pair.
+     * @param _sender Address initiating the pair creation.
+     * @param _isBuy Determines if the pair is a buy or sell pool.
+     * @param _nft Address of the ERC1155 NFT contract.
+     * @param _bondingCurve Address of the bonding curve contract.
+     * @param _delta Delta parameter for the bonding curve.
+     * @param _spotPrice Initial spot price for the pair.
+     * @param _lockDuration Duration for which the pair is locked.
+     * @param _nftId Specific ERC1155 NFT ID to add.
+     * @param _initialNFTBalance Initial ERC1155 NFT balance to add.
+     * @return pairAddress Address of the created pair.
+     */
     function _createERC1155ETHPair(
         address _sender,
         bool _isBuy,
@@ -550,8 +573,8 @@ contract SudoFactoryWrapper is
 
         // Determine pool type
         LSSVMPair.PoolType poolType = _isBuy
-            ? LSSVMPair.PoolType.TOKEN
-            : LSSVMPair.PoolType.NFT;
+            ? LSSVMPair.PoolType.NFT
+            : LSSVMPair.PoolType.TOKEN;
 
         pair = factory.createPairERC1155ETH{value: msg.value}(
             IERC1155(_nft),
@@ -577,19 +600,21 @@ contract SudoFactoryWrapper is
         return address(pair);
     }
 
-    /// @notice Creates an ERC1155-ERC20 pair.
-    /// @param _sender Address initiating the pair creation.
-    /// @param _isBuy Determines if the pair is a buy or sell pool.
-    /// @param _nft Address of the ERC1155 NFT contract.
-    /// @param _bondingCurve Address of the bonding curve contract.
-    /// @param _delta Delta parameter for the bonding curve.
-    /// @param _spotPrice Initial spot price for the pair.
-    /// @param _lockDuration Duration for which the pair is locked.
-    /// @param _nftId Specific ERC1155 NFT ID to add.
-    /// @param _initialNFTBalance Initial ERC1155 NFT balance to add for that specific _nftId.
-    /// @param _initialTokenBalance Initial ERC20 token balance to add.
-    /// @param _token Address of the ERC20 token.
-    /// @return pairAddress Address of the created pair.
+    /**
+     * @notice Creates an ERC1155-ERC20 pair.
+     * @param _sender Address initiating the pair creation.
+     * @param _isBuy Determines if the pair is a buy or sell pool.
+     * @param _nft Address of the ERC1155 NFT contract.
+     * @param _bondingCurve Address of the bonding curve contract.
+     * @param _delta Delta parameter for the bonding curve.
+     * @param _spotPrice Initial spot price for the pair.
+     * @param _lockDuration Duration for which the pair is locked.
+     * @param _nftId Specific ERC1155 NFT ID to add.
+     * @param _initialNFTBalance Initial ERC1155 NFT balance to add.
+     * @param _initialTokenBalance Initial ERC20 token balance to add.
+     * @param _token Address of the ERC20 token.
+     * @return pairAddress Address of the created pair.
+     */
     function _createERC1155ERC20Pair(
         address _sender,
         bool _isBuy,
@@ -612,7 +637,7 @@ contract SudoFactoryWrapper is
                 address(this),
                 _nftId,
                 _initialNFTBalance,
-                ""
+                bytes("")
             );
             IERC1155(_nft).setApprovalForAll(address(factory), true);
         }
@@ -629,8 +654,8 @@ contract SudoFactoryWrapper is
 
         // Determine pool type
         LSSVMPair.PoolType poolType = _isBuy
-            ? LSSVMPair.PoolType.TOKEN
-            : LSSVMPair.PoolType.NFT;
+            ? LSSVMPair.PoolType.NFT
+            : LSSVMPair.PoolType.TOKEN;
 
         LSSVMPairFactory.CreateERC1155ERC20PairParams
             memory params = LSSVMPairFactory.CreateERC1155ERC20PairParams({
@@ -660,12 +685,14 @@ contract SudoFactoryWrapper is
         return address(pair);
     }
 
-    /// @notice Finalizes the pair creation by setting up allow lists and approvals.
-    /// @param _sender Address that created the pair.
-    /// @param _pair The newly created LSSVMPair.
-    /// @param _initialNFTIDs Array of initial NFT IDs added to the pair.
-    /// @param _lockDuration Duration for which the pair is locked.
-    /// @param _isERC721 Boolean indicating if the pair is for ERC721 NFTs.
+    /**
+     * @notice Finalizes the pair creation by setting up allow lists and approvals.
+     * @param _sender Address that created the pair.
+     * @param _pair The newly created LSSVMPair.
+     * @param _initialNFTIDs Array of initial NFT IDs added to the pair.
+     * @param _lockDuration Duration for which the pair is locked.
+     * @param _isERC721 Boolean indicating if the pair is for ERC721 NFTs.
+     */
     function _finalizePairCreation(
         address _sender,
         LSSVMPair _pair,
@@ -684,7 +711,8 @@ contract SudoFactoryWrapper is
             pairCreator: _sender,
             hasWithdrawn: false
         });
-        pairsByCreator[_sender].push(address(_pair)); // Add the pair to the creator's list of pairs
+        pairsByCreator[_sender].push(address(_pair));
+        isPair[address(_pair)] = true;
 
         // Revoke approvals after pair creation to enhance security
         if (_initialNFTIDs.length > 0) {
@@ -699,11 +727,86 @@ contract SudoFactoryWrapper is
         emit PairCreated(address(_pair), _sender, unlockTime);
     }
 
-    /// @notice Transfers multiple ERC721 tokens from one address to another.
-    /// @param _from Address to transfer tokens from.
-    /// @param _to Address to transfer tokens to.
-    /// @param _nftContract Address of the ERC721 contract.
-    /// @param _tokenIDs Array of token IDs to transfer.
+    /**
+     * @notice Withdraws assets from a pair and transfers them to the owner.
+     * @param pair The LSSVMPair to withdraw from.
+     * @param nft The address of the NFT contract.
+     * @param sender The address of the pair creator.
+     * @return nftIds The IDs of the NFTs withdrawn.
+     * @return amountTokenOrETH The amount of tokens or ETH withdrawn.
+     * @return amountERC1155 The amount of ERC1155 NFTs withdrawn (0 for ERC721).
+     */
+    function _withdrawAssets(
+        LSSVMPair pair,
+        address nft,
+        address sender
+    )
+        internal
+        returns (
+            uint256[] memory nftIds,
+            uint256 amountTokenOrETH,
+            uint256 amountERC1155
+        )
+    {
+        // Withdraw tokens or ETH
+        if (_isETHPair(pair)) {
+            // Withdraw ETH from pair
+            amountTokenOrETH = address(pair).balance;
+            if (amountTokenOrETH > 0) {
+                LSSVMPairETH(payable(address(pair))).withdrawETH(
+                    amountTokenOrETH
+                );
+                payable(sender).safeTransferETH(amountTokenOrETH);
+            }
+        } else {
+            // Withdraw ERC20 tokens from pair
+            ERC20 token = ILSSVMPair(address(pair)).token();
+            amountTokenOrETH = token.balanceOf(address(pair));
+            if (amountTokenOrETH > 0) {
+                pair.withdrawERC20(token, amountTokenOrETH);
+                token.safeTransfer(sender, amountTokenOrETH);
+            }
+        }
+
+        // Withdraw NFTs
+        if (_isERC721Pair(pair)) {
+            // Withdraw ERC721 NFTs
+            nftIds = LSSVMPairERC721(address(pair)).getAllIds();
+            amountERC1155 = 0;
+
+            pair.withdrawERC721(IERC721(nft), nftIds);
+            _transferERC721Tokens(address(this), sender, nft, nftIds);
+        } else {
+            // Withdraw ERC1155 NFTs
+            nftIds = new uint256[](1);
+            nftIds[0] = LSSVMPairERC1155(address(pair)).nftId();
+            uint256[] memory amountsERC1155 = new uint256[](1);
+            amountsERC1155[0] = IERC1155(nft).balanceOf(
+                address(pair),
+                nftIds[0]
+            );
+            amountERC1155 = amountsERC1155[0];
+
+            pair.withdrawERC1155(IERC1155(nft), nftIds, amountsERC1155);
+            IERC1155(nft).safeBatchTransferFrom(
+                address(this),
+                sender,
+                nftIds,
+                amountsERC1155,
+                bytes("")
+            );
+        }
+
+        return (nftIds, amountTokenOrETH, amountERC1155);
+    }
+
+    /**
+     * @notice Transfers multiple ERC721 tokens from one address to another.
+     * @param _from Address to transfer tokens from.
+     * @param _to Address to transfer tokens to.
+     * @param _nftContract Address of the ERC721 contract.
+     * @param _tokenIDs Array of token IDs to transfer.
+     */
     function _transferERC721Tokens(
         address _from,
         address _to,
@@ -719,5 +822,43 @@ contract SudoFactoryWrapper is
                 ++i;
             }
         }
+    }
+
+    /**
+     * @notice Checks if a contract supports a given interface.
+     * @param _contract Address of the contract to check.
+     * @param _interfaceId Interface ID to check.
+     * @return True if the contract supports the interface.
+     */
+    function _supportsInterface(
+        address _contract,
+        bytes4 _interfaceId
+    ) internal view returns (bool) {
+        return IERC165(_contract).supportsInterface(_interfaceId);
+    }
+
+    /**
+     * @notice Checks if a pair is an ETH pair.
+     * @param pair The LSSVMPair to check.
+     * @return True if the pair is an ETH pair.
+     */
+    function _isETHPair(LSSVMPair pair) internal pure returns (bool) {
+        return
+            pair.pairVariant() ==
+            ILSSVMPairFactoryLike.PairVariant.ERC721_ETH ||
+            pair.pairVariant() == ILSSVMPairFactoryLike.PairVariant.ERC1155_ETH;
+    }
+
+    /**
+     * @notice Checks if a pair is an ERC721 pair.
+     * @param pair The LSSVMPair to check.
+     * @return True if the pair is an ERC721 pair.
+     */
+    function _isERC721Pair(LSSVMPair pair) internal pure returns (bool) {
+        return
+            pair.pairVariant() ==
+            ILSSVMPairFactoryLike.PairVariant.ERC721_ETH ||
+            pair.pairVariant() ==
+            ILSSVMPairFactoryLike.PairVariant.ERC721_ERC20;
     }
 }
