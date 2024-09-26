@@ -5,36 +5,94 @@ import {VRFConsumerBaseV2Plus} from "../chainlink-contracts/src/v0.8/vrf/dev/VRF
 import {VRFV2PlusClient} from "../chainlink-contracts/src/v0.8/vrf/dev/libraries/VRFV2PlusClient.sol";
 import "./SudoWrapper.sol";
 
+/**
+ * @title VRFConsumer
+ * @notice This contract is used to consume randomness from the Chainlink VRF service.
+ * @dev Assumes you have a valid subscription ID and the service is funded.
+ */
 contract VRFConsumer is VRFConsumerBaseV2Plus {
-  event RequestSent(uint256 requestId, uint32 numWords);
-  event RequestFulfilled(uint256 requestId, uint256[] randomWords);
+    // =========================================
+    // Constants and Immutable Variables
+    // =========================================
 
-  struct RequestStatus {
-    bool fulfilled; // if the request has been successfully fulfilled
-    bool exists; // if a requestId exists
-    uint256[] randomWords;
-  }
+    /// @notice The maximum callback gas limit for VRF requests.
+    uint32 public constant MAX_CALLBACK_GAS_LIMIT = 2_500_000;
 
-  mapping(uint256 => RequestStatus) public s_requests; /* requestId --> requestStatus */
+    /// @notice The maximum number of random words that can be requested in a single request.
+    uint32 public constant MAX_RANDOM_WORDS = 500;
 
-  // Your subscription ID.
-  uint256 public s_subscriptionId;
-  // Past request IDs.
-  uint256[] public requestIds;
-  uint256 public lastRequestId;
-  SudoVRFWrapper public sudoWrapper;
+    /// @notice The maximum number of confirmations for a VRF request.
+    uint16 public constant MAX_REQUEST_CONFIRMATIONS = 200;
 
-  bytes32 public keyHash = 0xdc2f87677b01473c763cb0aee938ed3341512f6057324a584e5944e786144d70;
-  uint32 public callbackGasLimit = 1_000_000;
-  uint16 public requestConfirmations = 3;
-  bool public enableNativePayment = true;
-  address private vrfCoordinatorContract = 0xd5D517aBE5cF79B7e95eC98dB0f0277788aFF634;
+    /// @notice The subscription ID for the VRF requests.
+    uint256 public immutable s_subscriptionId;
 
-  constructor(uint256 subscriptionId) VRFConsumerBaseV2Plus(vrfCoordinatorContract) {
-    s_subscriptionId = subscriptionId;
-  }
+    /// @notice The VRF coordinator contract address.
+    address public immutable vrfCoordinatorContract =
+        0xd5D517aBE5cF79B7e95eC98dB0f0277788aFF634;
 
-  modifier onlySudoWrapper() {
+    // =========================================
+    // State Variables
+    // =========================================
+
+    /// @notice Mapping from request ID to request status.
+    mapping(uint256 => RequestStatus) public s_requests;
+
+    /// @notice The SudoWrapper contract instance.
+    SudoVRFWrapper public sudoWrapper;
+
+    /// @notice The key hash for the VRF requests.
+    bytes32 public keyHash =
+        0xdc2f87677b01473c763cb0aee938ed3341512f6057324a584e5944e786144d70;
+
+    /// @notice The callback gas limit for the VRF requests.
+    uint32 public callbackGasLimit = 1_000_000;
+
+    /// @notice The number of confirmations for the VRF requests.
+    uint16 public requestConfirmations = 3;
+
+    /// @notice Whether to use native payment for the VRF requests (ETH or LINK).
+    bool public enableNativePayment = true;
+
+    // =========================================
+    // Structs
+    // =========================================
+
+    /// @notice Struct representing the status of a VRF request.
+    struct RequestStatus {
+        bool fulfilled; // if the request has been successfully fulfilled
+        bool exists; // if a requestId exists
+    }
+
+    // =========================================
+    // Events
+    // =========================================
+
+    event RequestSent(uint256 requestId);
+    event RequestFulfilled(uint256 requestId);
+    event SudoWrapperSet(address sudoWrapper);
+    event VRFConfigUpdated(
+        uint32 callbackGasLimit,
+        uint16 requestConfirmations,
+        bytes32 keyHash,
+        bool enableNativePayment
+    );
+
+    // =========================================
+    // Constructor
+    // =========================================
+
+    constructor(
+        uint256 _subscriptionId
+    ) VRFConsumerBaseV2Plus(vrfCoordinatorContract) {
+        s_subscriptionId = _subscriptionId;
+    }
+
+    // =========================================
+    // Modifiers
+    // =========================================
+
+    modifier onlySudoWrapper() {
         require(
             msg.sender == address(sudoWrapper),
             "Only the SudoWrapper can call this function"
@@ -42,65 +100,108 @@ contract VRFConsumer is VRFConsumerBaseV2Plus {
         _;
     }
 
-  // Assumes the subscription is funded sufficiently.
-  function requestRandomWords(uint32 _numWords) external onlySudoWrapper returns (uint256 requestId) {
-    // Will revert if subscription is not set and funded.
-    requestId = s_vrfCoordinator.requestRandomWords(
-      VRFV2PlusClient.RandomWordsRequest({
-        keyHash: keyHash,
-        subId: s_subscriptionId,
-        requestConfirmations: requestConfirmations,
-        callbackGasLimit: callbackGasLimit,
-        numWords: _numWords,
-        extraArgs: VRFV2PlusClient._argsToBytes(
-          VRFV2PlusClient.ExtraArgsV1({ nativePayment: enableNativePayment })
-        )
-      })
-    );
-    s_requests[requestId] = RequestStatus({
-        randomWords: new uint256[](0),
-        exists: true,
-        fulfilled: false
-    });
-    requestIds.push(requestId);
-    lastRequestId = requestId;
-    emit RequestSent(requestId, _numWords);
-    return requestId;
-  }
+    // =========================================
+    // External Functions
+    // =========================================
 
-  function fulfillRandomWords(uint256 _requestId, uint256[] calldata _randomWords) internal override {
-    require(s_requests[_requestId].exists, "request not found");
-    // provides random numbers when calling "buyNFTsCallback"
-    sudoWrapper.buyNFTsCallback(_requestId, _randomWords);
+    /**
+     * @notice Requests random words from the VRF service.
+     * @param _numWords The number of random words to request.
+     * @return requestId The ID of the request.
+     */
+    function requestRandomWords(
+        uint32 _numWords
+    ) external onlySudoWrapper returns (uint256 requestId) {
+        require(_numWords <= MAX_RANDOM_WORDS, "Too many random words");
+        // Will revert if subscription is not set and funded.
+        requestId = s_vrfCoordinator.requestRandomWords(
+            VRFV2PlusClient.RandomWordsRequest({
+                keyHash: keyHash,
+                subId: s_subscriptionId,
+                requestConfirmations: requestConfirmations,
+                callbackGasLimit: callbackGasLimit,
+                numWords: _numWords,
+                extraArgs: VRFV2PlusClient._argsToBytes(
+                    VRFV2PlusClient.ExtraArgsV1({
+                        nativePayment: enableNativePayment
+                    })
+                )
+            })
+        );
+        s_requests[requestId] = RequestStatus({exists: true, fulfilled: false});
 
-    s_requests[_requestId].fulfilled = true;
-    s_requests[_requestId].randomWords = _randomWords;
-    emit RequestFulfilled(_requestId, _randomWords);
-  }
+        emit RequestSent(requestId);
+        return requestId;
+    }
 
-  function getRequestStatus(uint256 _requestId) external view returns (bool fulfilled, uint256[] memory randomWords) {
-    require(s_requests[_requestId].exists, "request not found");
-    RequestStatus memory request = s_requests[_requestId];
-    return (request.fulfilled, request.randomWords);
-  }
+    // =========================================
+    // Admin Functions
+    // =========================================
 
-  function setSudoWrapper(address payable _sudoWrapper) external onlyOwner {
-    sudoWrapper = SudoVRFWrapper(_sudoWrapper);
-  }
+    /**
+     * @notice Set the SudoWrapper contract.
+     * @param _sudoWrapper The address of the SudoWrapper contract.
+     */
+    function setSudoWrapper(address payable _sudoWrapper) external onlyOwner {
+        sudoWrapper = SudoVRFWrapper(_sudoWrapper);
+        emit SudoWrapperSet(_sudoWrapper);
+    }
 
-  function setCallbackGasLimit(uint32 _callbackGasLimit) external onlyOwner {
-    callbackGasLimit = _callbackGasLimit;
-  }
+    /**
+     * @notice Set the VRF config.
+     * @param _callbackGasLimit The callback gas limit.
+     * @param _requestConfirmations The request confirmations.
+     * @param _keyHash The key hash.
+     * @param _enableNativePayment Whether to use native payment for the VRF requests.
+     */
+    function setVRFConfig(
+        uint32 _callbackGasLimit,
+        uint16 _requestConfirmations,
+        bytes32 _keyHash,
+        bool _enableNativePayment
+    ) external onlyOwner {
+        require(
+            _callbackGasLimit <= MAX_CALLBACK_GAS_LIMIT &&
+                _callbackGasLimit > 0,
+            "Invalid callback gas limit"
+        );
+        require(
+            _requestConfirmations <= MAX_REQUEST_CONFIRMATIONS &&
+                _requestConfirmations > 0,
+            "Invalid request confirmations"
+        );
+        require(_keyHash != bytes32(0), "Invalid key hash");
+        callbackGasLimit = _callbackGasLimit;
+        requestConfirmations = _requestConfirmations;
+        keyHash = _keyHash;
+        enableNativePayment = _enableNativePayment;
 
-  function setRequestConfirmations(uint16 _requestConfirmations) external onlyOwner {
-    requestConfirmations = _requestConfirmations;
-  }
+        emit VRFConfigUpdated(
+            _callbackGasLimit,
+            _requestConfirmations,
+            _keyHash,
+            _enableNativePayment
+        );
+    }
 
-  function setKeyHash(bytes32 _keyHash) external onlyOwner {
-    keyHash = _keyHash;
-  }
+    // =========================================
+    // Internal Functions
+    // =========================================
 
-  function setEnableNativePayment(bool _enableNativePayment) external onlyOwner {
-    enableNativePayment = _enableNativePayment;
-  }
+    /**
+     * @notice Fulfill the VRF request.
+     * @param _requestId The ID of the request.
+     * @param _randomWords The random words.
+     */
+    function fulfillRandomWords(
+        uint256 _requestId,
+        uint256[] calldata _randomWords
+    ) internal override {
+        require(s_requests[_requestId].exists, "request not found");
+        // store results in SudoWrapper buyRequests
+        sudoWrapper.buyNFTsCallback(_requestId, _randomWords);
+
+        s_requests[_requestId].fulfilled = true;
+        emit RequestFulfilled(_requestId);
+    }
 }

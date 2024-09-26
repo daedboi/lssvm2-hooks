@@ -12,15 +12,13 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/security/ReentrancyGuard.
 import {ERC721Holder} from "@openzeppelin/contracts/token/ERC721/utils/ERC721Holder.sol";
 import {ERC1155Holder} from "@openzeppelin/contracts/token/ERC1155/utils/ERC1155Holder.sol";
 
-import {LSSVMPairFactory} from "../LSSVMPairFactory.sol";
-import {LSSVMPair} from "../LSSVMPair.sol";
-import {LSSVMPairERC721} from "../erc721/LSSVMPairERC721.sol";
-import {LSSVMPairERC1155} from "../erc1155/LSSVMPairERC1155.sol";
-import {ILSSVMPair} from "../ILSSVMPair.sol";
-import {ILSSVMPairFactoryLike} from "../ILSSVMPairFactoryLike.sol";
-import {VRFConsumer} from "./VRFConsumer.sol";
-import {SudoFactoryWrapper} from "./SudoFactoryWrapper.sol";
+import {ILSSVMPairFactory, ILSSVMPair, ICurve, IAllowListHook, IVRFConsumer, ISudoVRFWrapper, ISudoFactoryWrapper} from "./Interfaces.sol";
 
+/**
+ * @title SudoVRFWrapper
+ * @author 0xdaedboi
+ * @notice This contract is used as a router for buying and selling SudoSwap pairs with randomness enabled for buying NFTs.
+ */
 contract SudoVRFWrapper is
     Ownable,
     ReentrancyGuard,
@@ -32,21 +30,24 @@ contract SudoVRFWrapper is
     using FixedPointMathLib for uint256;
 
     // =========================================
-    // Constants
+    // Constants and Immutable Variables
     // =========================================
 
     /// @notice The maximum fee percentage (5%)
     uint256 public constant MAX_FEE = 5e16;
+
+    /// @notice The delay before a request can be cancelled
+    uint256 public constant CANCELLATION_DELAY = 5 minutes;
+
+    /// @notice SudoFactoryWrapper contract instance
+    ISudoFactoryWrapper public immutable factoryWrapper;
 
     // =========================================
     // State Variables
     // =========================================
 
     /// @notice VRFConsumer contract instance
-    VRFConsumer public vrfConsumer;
-
-    /// @notice SudoFactoryWrapper contract instance
-    SudoFactoryWrapper public factoryWrapper;
+    IVRFConsumer public vrfConsumer;
 
     /// @notice The current fee percentage
     uint256 public fee;
@@ -60,16 +61,35 @@ contract SudoVRFWrapper is
     /// @notice Mapping from request ID to BuyRequest
     mapping(uint256 => BuyRequest) private buyRequests;
 
+    // =========================================
+    // Structs
+    // =========================================
+
     /// @notice Struct representing a buy request for random NFTs
     struct BuyRequest {
         bool fulfilled;
         bool claimed;
+        bool cancelled;
         address user;
         address pair;
         uint256 nftAmount;
         uint256 inputAmount;
         uint256[] randomResult;
         uint256[] claimedTokenIds;
+        uint256 timestamp;
+    }
+
+    /// @notice Struct representing a buy request for random NFTs (public)
+    struct BuyRequestPublic {
+        bool fulfilled;
+        bool claimed;
+        bool cancelled;
+        address user;
+        address pair;
+        uint256 nftAmount;
+        uint256 inputAmount;
+        uint256[] claimedTokenIds;
+        uint256 timestamp;
     }
 
     // =========================================
@@ -80,7 +100,8 @@ contract SudoVRFWrapper is
         address indexed pair,
         address indexed buyer,
         uint256[] nftIds,
-        uint256 finalPrice
+        uint256 finalPrice,
+        bool isRandom
     );
     event NFTsSold(
         address indexed pair,
@@ -88,10 +109,17 @@ contract SudoVRFWrapper is
         uint256[] nftIds,
         uint256 outputAmount
     );
+    event FeeTransferred(
+        address indexed recipient,
+        uint256 amount,
+        address indexed pair
+    );
     event FeeConfigUpdated(uint256 fee, address feeRecipient);
-    event RandomPairSet(address pair);
-    event RequestFulfilled(address user, uint256 requestId);
-    event ReceivedWrapperFee(uint256 amount);
+    event RandomPairSet(address indexed pair);
+    event RequestFulfilled(address indexed user, uint256 requestId);
+    event VRFConsumerUpdated(address newVRFConsumer);
+    event RequestCancelled(address indexed user, uint256 requestId);
+    event Refunded(address indexed to, uint256 amount, address indexed pair);
 
     // =========================================
     // Constructor
@@ -118,10 +146,10 @@ contract SudoVRFWrapper is
         );
         require(_fee <= MAX_FEE, "Wrapper fee cannot be greater than 5%");
 
-        vrfConsumer = VRFConsumer(_vrfConsumer);
+        vrfConsumer = IVRFConsumer(_vrfConsumer);
         fee = _fee;
         feeRecipient = _feeRecipient;
-        factoryWrapper = SudoFactoryWrapper(_factoryWrapper);
+        factoryWrapper = ISudoFactoryWrapper(_factoryWrapper);
     }
 
     /**
@@ -163,37 +191,34 @@ contract SudoVRFWrapper is
         uint256 lastRequestId = userRequests[userRequests.length - 1];
         BuyRequest storage request = buyRequests[lastRequestId];
 
-        // Ensure the request is fulfilled and not already claimed
+        // Ensure the request is fulfilled and not already claimed or cancelled
         require(request.fulfilled, "Last request is not fulfilled");
-        require(!request.claimed, "Last request has already been claimed");
+        require(
+            !request.claimed && !request.cancelled,
+            "Last request has already been claimed or cancelled"
+        );
 
-        LSSVMPair pair = LSSVMPair(request.pair);
+        ILSSVMPair pair = ILSSVMPair(request.pair);
         bool isETHPair = _isETHPair(pair);
-        uint256[] memory allPairNFTIds = LSSVMPairERC721(request.pair)
-            .getAllIds(); // All ERC721 token IDs in the pair
+        uint256[] memory allPairNFTIds = pair.getAllIds();
 
-        if (request.nftAmount > allPairNFTIds.length) {
-            // Not enough NFTs; refund the user
-            request.claimed = true;
+        if (request.nftAmount > allPairNFTIds.length || request.randomResult.length < request.nftAmount) {
+            // Not enough NFTs or random results; refund the user
+            request.cancelled = true;
             _refundUser(msg.sender, request.inputAmount, pair);
             return new uint256[](0);
         }
 
-        (
-            ,
-            ,
-            ,
-            uint256 priceWithoutWrapperFee,
-            uint256 sudoswapFee,
-            uint256 royaltyAmount
-        ) = pair.getBuyNFTQuote(0, request.nftAmount);
-        uint256 wrapperFee = (priceWithoutWrapperFee -
-            sudoswapFee -
-            royaltyAmount).mulWadUp(fee);
-        uint256 finalPrice = priceWithoutWrapperFee + wrapperFee;
+        (uint256 finalPrice, uint256 wrapperFee, ) = calculateBuyOrSell(
+            request.pair,
+            request.nftAmount,
+            0, // Asset ID is 0 for ERC721
+            true // It's a buy operation
+        );
+
         if (request.inputAmount < finalPrice) {
             // Insufficient funds; refund the user
-            request.claimed = true;
+            request.cancelled = true;
             _refundUser(msg.sender, request.inputAmount, pair);
             return new uint256[](0);
         }
@@ -211,10 +236,12 @@ contract SudoVRFWrapper is
         }
 
         // Perform the swap through the pair. request.inputAmount is finalPrice + slippage so we deduct the finalPrice from it
-        uint256 swapAmount = priceWithoutWrapperFee +
-            request.inputAmount -
-            finalPrice;
+        uint256 swapAmount = (finalPrice - wrapperFee) +
+            (request.inputAmount - finalPrice);
         uint256 amountUsed;
+
+        request.claimed = true;
+
         try
             pair.swapTokenForSpecificNFTs{value: isETHPair ? swapAmount : 0}(
                 randomNFTIds,
@@ -226,7 +253,9 @@ contract SudoVRFWrapper is
         returns (uint256 _amountUsed) {
             amountUsed = _amountUsed;
         } catch {
-            request.claimed = true;
+            // Reset claimed state
+            request.claimed = false;
+            request.cancelled = true;
             _refundUser(msg.sender, request.inputAmount, pair);
             return new uint256[](0);
         }
@@ -238,10 +267,15 @@ contract SudoVRFWrapper is
         // Transfer fee to fee recipient
         _transferFee(wrapperFee, pair);
 
-        request.claimed = true;
         request.claimedTokenIds = randomNFTIds;
 
-        emit NFTsBought(request.pair, msg.sender, randomNFTIds, finalPrice);
+        emit NFTsBought(
+            request.pair,
+            msg.sender,
+            randomNFTIds,
+            finalPrice,
+            true
+        );
 
         return randomNFTIds;
     }
@@ -260,6 +294,30 @@ contract SudoVRFWrapper is
         request.fulfilled = true;
 
         emit RequestFulfilled(request.user, _requestId);
+    }
+
+    /**
+     * @notice Allows a user to cancel an unfulfilled VRF request and retrieve their funds.
+     * @param requestId The ID of the VRF request to cancel.
+     */
+    function cancelUnfulfilledRequest(uint256 requestId) external nonReentrant {
+        BuyRequest storage request = buyRequests[requestId];
+        require(request.user == msg.sender, "Not your request");
+        require(
+            !request.fulfilled && !request.cancelled,
+            "Request already fulfilled or cancelled"
+        );
+        require(
+            block.timestamp >= request.timestamp + CANCELLATION_DELAY,
+            "Wait before cancelling"
+        );
+
+        request.cancelled = true;
+
+        // Refund the user
+        _refundUser(msg.sender, request.inputAmount, ILSSVMPair(request.pair));
+
+        emit RequestCancelled(msg.sender, requestId);
     }
 
     /**
@@ -287,25 +345,27 @@ contract SudoVRFWrapper is
         if (userRequests.length > 0) {
             uint256 lastRequestId = userRequests[userRequests.length - 1];
             require(
-                buyRequests[lastRequestId].claimed,
+                buyRequests[lastRequestId].claimed ||
+                    buyRequests[lastRequestId].cancelled,
                 "User has a pending buy request and hasn't claimed yet"
             );
         }
 
-        LSSVMPair pair = LSSVMPair(_pair);
-        uint256 totalPairNFTs = LSSVMPairERC721(_pair).getAllIds().length;
-        bool isBuyPool = pair.poolType() == LSSVMPair.PoolType.NFT;
+        ILSSVMPair pair = ILSSVMPair(_pair);
+        require(
+            pair.poolType() == ILSSVMPair.PoolType.NFT,
+            "Pair is not a buy pool"
+        );
+
+        uint256 totalPairNFTs = pair.getAllIds().length;
         bool isETHPair = _isETHPair(pair);
-        bool isERC721Pair = _isERC721Pair(pair);
-
-        require(isBuyPool && isERC721Pair, "Pair is not an ERC721 buy pool");
-        require(_nftAmount <= totalPairNFTs, "Not enough NFTs");
-
         uint256 inputAmount = isETHPair ? msg.value : _maxExpectedTokenInput;
+
+        require(_nftAmount <= totalPairNFTs, "Not enough NFTs");
 
         if (!isETHPair) {
             // For ERC20 pairs, transfer tokens from the buyer to this contract and approve the pair
-            ERC20 token = ILSSVMPair(_pair).token();
+            ERC20 token = pair.token();
             token.safeTransferFrom(msg.sender, address(this), inputAmount);
             token.safeApprove(_pair, inputAmount);
         }
@@ -314,14 +374,86 @@ contract SudoVRFWrapper is
         buyRequests[requestId] = BuyRequest({
             fulfilled: false,
             claimed: false,
+            cancelled: false,
             user: msg.sender,
             pair: _pair,
             nftAmount: _nftAmount,
             inputAmount: inputAmount,
             randomResult: new uint256[](0),
-            claimedTokenIds: new uint256[](0)
+            claimedTokenIds: new uint256[](0),
+            timestamp: block.timestamp
         });
         userToRequestIds[msg.sender].push(requestId);
+    }
+
+    /**
+     * @notice Purchases specific NFTs from a non-random sell pool.
+     * @param _pair The address of the LSSVMPair pool to buy NFTs from, must not be a random pair.
+     * @param _nftIds The list of NFT IDs to purchase.
+     * @param _maxExpectedTokenInput The maximum amount of tokens or ETH the user is willing to spend (inclusive of all fees + slippage).
+     * @return amountSpent The total amount spent during the purchase, including fees.
+     */
+    function buyNFTs(
+        address _pair,
+        uint256[] calldata _nftIds,
+        uint256 _maxExpectedTokenInput
+    ) external payable nonReentrant returns (uint256 amountSpent) {
+        require(_pair != address(0), "Invalid pair");
+        require(
+            _nftIds.length > 0 && _maxExpectedTokenInput > 0,
+            "Invalid input"
+        );
+        require(
+            factoryWrapper.isPair(_pair) && !factoryWrapper.isRandomPair(_pair),
+            "Must be a valid non-random pair"
+        );
+
+        ILSSVMPair pair = ILSSVMPair(_pair);
+        require(
+            pair.poolType() == ILSSVMPair.PoolType.NFT,
+            "Pair is not a sell pool"
+        );
+
+        bool isETHPair = _isETHPair(pair);
+        uint256 inputAmount = isETHPair ? msg.value : _maxExpectedTokenInput;
+
+        if (!isETHPair) {
+            // For ERC20 pairs, transfer tokens from the buyer to this contract and approve the pair
+            ERC20 token = pair.token();
+            token.safeTransferFrom(msg.sender, address(this), inputAmount);
+            token.safeApprove(_pair, inputAmount);
+        }
+
+        (uint256 finalPrice, uint256 wrapperFee, ) = calculateBuyOrSell(
+            _pair,
+            _nftIds.length,
+            0, // Asset ID is 0 for ERC721
+            true // It's a buy operation
+        );
+
+        require(inputAmount >= finalPrice, "Insufficient funds to buy NFTs");
+
+        // request.inputAmount is finalPrice + slippage so we deduct the finalPrice from it
+        uint256 swapAmount = (finalPrice - wrapperFee) +
+            (inputAmount - finalPrice);
+
+        // Perform the swap through the pair
+        uint256 amountUsed = pair.swapTokenForSpecificNFTs{
+            value: isETHPair ? finalPrice - wrapperFee : 0
+        }(_nftIds, swapAmount, msg.sender, false, address(this));
+
+        // Transfer wrapper fee to fee recipient
+        _transferFee(wrapperFee, pair);
+
+        // Refund any excess funds
+        if (amountUsed < swapAmount) {
+            uint256 refundAmount = swapAmount - amountUsed;
+            _refundUser(msg.sender, refundAmount, pair);
+        }
+
+        amountSpent = finalPrice;
+
+        emit NFTsBought(_pair, msg.sender, _nftIds, amountSpent, false);
     }
 
     /**
@@ -338,13 +470,21 @@ contract SudoVRFWrapper is
     ) external nonReentrant returns (uint256 outputAmount) {
         require(_pair != address(0), "Invalid pair");
         require(
+            factoryWrapper.isPair(_pair) && !factoryWrapper.isRandomPair(_pair),
+            "Must be a valid non-random pair"
+        );
+        require(
             _nftIds.length > 0 && _minExpectedTokenOutput > 0,
             "Invalid input"
         );
 
-        LSSVMPair pair = LSSVMPair(_pair);
-        address nftAddress = pair.nft();
+        ILSSVMPair pair = ILSSVMPair(_pair);
+        require(
+            pair.poolType() == ILSSVMPair.PoolType.TOKEN,
+            "Pair is not a sell pool"
+        );
 
+        address nftAddress = pair.nft();
         if (_isERC721Pair(pair)) {
             IERC721 nft = IERC721(nftAddress);
             // Transfer NFTs from the seller to this contract
@@ -361,7 +501,7 @@ contract SudoVRFWrapper is
             nft.safeTransferFrom(
                 msg.sender,
                 address(this),
-                LSSVMPairERC1155(_pair).nftId(),
+                pair.nftId(),
                 _nftIds[0],
                 bytes("")
             );
@@ -377,17 +517,13 @@ contract SudoVRFWrapper is
             address(this)
         );
 
-        // Calculate the final output and wrapper fee
-        (
-            ,
-            ,
-            ,
-            uint256 totalAmount,
-            uint256 sudoswapFee,
-            uint256 royaltyAmount
-        ) = pair.getSellNFTQuote(_nftIds[0], _nftIds.length);
-        uint256 wrapperFee = (totalAmount + sudoswapFee + royaltyAmount)
-            .mulWadUp(fee);
+        // Calculate the  wrapper fee
+        (, uint256 wrapperFee, ) = calculateBuyOrSell(
+            _pair,
+            _nftIds.length,
+            _nftIds[0],
+            false
+        );
         outputAmount = amountBeforeWrapperFee - wrapperFee;
 
         // Transfer the wrapper fee to fee recipient and the rest to the user
@@ -417,11 +553,11 @@ contract SudoVRFWrapper is
         uint256 _assetId,
         bool _isBuy
     )
-        external
+        public
         view
         returns (uint256 finalPrice, uint256 wrapperFee, uint256 royaltyAmount)
     {
-        LSSVMPair pair = LSSVMPair(_pair);
+        ILSSVMPair pair = ILSSVMPair(_pair);
 
         if (_isBuy) {
             (
@@ -460,16 +596,28 @@ contract SudoVRFWrapper is
 
     /**
      * @notice Returns all buy requests for a given user.
+     * @dev We exclude the random results from the public view.
      * @param user The address of the user.
      * @return requests An array of BuyRequest structs.
      */
     function getBuyRequests(
         address user
-    ) external view returns (BuyRequest[] memory requests) {
+    ) external view returns (BuyRequestPublic[] memory requests) {
         uint256[] storage userRequests = userToRequestIds[user];
-        requests = new BuyRequest[](userRequests.length);
+        requests = new BuyRequestPublic[](userRequests.length);
         for (uint256 i = 0; i < userRequests.length; i++) {
-            requests[i] = buyRequests[userRequests[i]];
+            BuyRequest storage request = buyRequests[userRequests[i]];
+            requests[i] = BuyRequestPublic({
+                fulfilled: request.fulfilled,
+                claimed: request.claimed,
+                cancelled: request.cancelled,
+                user: request.user,
+                pair: request.pair,
+                nftAmount: request.nftAmount,
+                inputAmount: request.inputAmount,
+                claimedTokenIds: request.claimedTokenIds,
+                timestamp: request.timestamp
+            });
         }
     }
 
@@ -494,6 +642,17 @@ contract SudoVRFWrapper is
         emit FeeConfigUpdated(_newFee, _newFeeRecipient);
     }
 
+    /**
+     * @notice Updates the VRF consumer contract address.
+     * @param _newVRFConsumer The new VRF consumer contract address.
+     */
+    function updateVRFConsumer(address _newVRFConsumer) external onlyOwner {
+        require(_newVRFConsumer != address(0), "Invalid address");
+
+        vrfConsumer = IVRFConsumer(_newVRFConsumer);
+        emit VRFConsumerUpdated(_newVRFConsumer);
+    }
+
     // =========================================
     // Internal Functions
     // =========================================
@@ -503,11 +662,10 @@ contract SudoVRFWrapper is
      * @param pair The LSSVMPair to check.
      * @return True if the pair is an ETH pair.
      */
-    function _isETHPair(LSSVMPair pair) internal pure returns (bool) {
+    function _isETHPair(ILSSVMPair pair) internal pure returns (bool) {
         return
-            pair.pairVariant() ==
-            ILSSVMPairFactoryLike.PairVariant.ERC721_ETH ||
-            pair.pairVariant() == ILSSVMPairFactoryLike.PairVariant.ERC1155_ETH;
+            pair.pairVariant() == ILSSVMPairFactory.PairVariant.ERC721_ETH ||
+            pair.pairVariant() == ILSSVMPairFactory.PairVariant.ERC1155_ETH;
     }
 
     /**
@@ -515,12 +673,10 @@ contract SudoVRFWrapper is
      * @param pair The LSSVMPair to check.
      * @return True if the pair is an ERC721 pair.
      */
-    function _isERC721Pair(LSSVMPair pair) internal pure returns (bool) {
+    function _isERC721Pair(ILSSVMPair pair) internal pure returns (bool) {
         return
-            pair.pairVariant() ==
-            ILSSVMPairFactoryLike.PairVariant.ERC721_ETH ||
-            pair.pairVariant() ==
-            ILSSVMPairFactoryLike.PairVariant.ERC721_ERC20;
+            pair.pairVariant() == ILSSVMPairFactory.PairVariant.ERC721_ETH ||
+            pair.pairVariant() == ILSSVMPairFactory.PairVariant.ERC721_ERC20;
     }
 
     /**
@@ -529,13 +685,14 @@ contract SudoVRFWrapper is
      * @param amount The amount to refund.
      * @param pair The LSSVMPair involved in the transaction.
      */
-    function _refundUser(address to, uint256 amount, LSSVMPair pair) internal {
+    function _refundUser(address to, uint256 amount, ILSSVMPair pair) internal {
         if (_isETHPair(pair)) {
             payable(to).safeTransferETH(amount);
         } else {
-            ERC20 token = ILSSVMPair(address(pair)).token();
+            ERC20 token = pair.token();
             token.safeTransfer(to, amount);
         }
+        emit Refunded(to, amount, address(pair));
     }
 
     /**
@@ -543,15 +700,15 @@ contract SudoVRFWrapper is
      * @param amount The fee amount to transfer.
      * @param pair The LSSVMPair involved in the transaction.
      */
-    function _transferFee(uint256 amount, LSSVMPair pair) internal {
+    function _transferFee(uint256 amount, ILSSVMPair pair) internal {
         if (_isETHPair(pair)) {
             payable(feeRecipient).safeTransferETH(amount);
         } else {
-            ERC20 token = ILSSVMPair(address(pair)).token();
+            ERC20 token = pair.token();
             token.safeTransfer(feeRecipient, amount);
         }
 
-        emit ReceivedWrapperFee(amount);
+        emit FeeTransferred(feeRecipient, amount, address(pair));
     }
 
     /**
@@ -563,12 +720,12 @@ contract SudoVRFWrapper is
     function _transferTokens(
         address to,
         uint256 amount,
-        LSSVMPair pair
+        ILSSVMPair pair
     ) internal {
         if (_isETHPair(pair)) {
             payable(to).safeTransferETH(amount);
         } else {
-            ERC20 token = ILSSVMPair(address(pair)).token();
+            ERC20 token = pair.token();
             token.safeTransfer(to, amount);
         }
     }
