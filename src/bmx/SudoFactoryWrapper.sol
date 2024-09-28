@@ -46,8 +46,8 @@ contract SudoFactoryWrapper is
     /// @notice Instance of the AllowListHook for managing allowed addresses
     IAllowListHook public allowListHook;
 
-    /// @notice Address of the SudoWrapper contract (needs to be whitelisted in AllowListHook)
-    address public sudoWrapper;
+    /// @notice Address of the SudoVRFRouter contract (needs to be whitelisted in AllowListHook)
+    address public sudoVRFRouter;
 
     /// @notice Minimum duration that a pair must remain locked
     uint256 public minimumLockDuration;
@@ -114,7 +114,7 @@ contract SudoFactoryWrapper is
         uint256 amountERC1155
     );
     event AllowListHookUpdated(address newAllowListHook);
-    event SudoWrapperUpdated(address newSudoWrapper);
+    event SudoVRFRouterUpdated(address newSudoVRFRouter);
     event MinimumLockDurationUpdated(uint256 newMinimumLockDuration);
 
     // =========================================
@@ -124,30 +124,16 @@ contract SudoFactoryWrapper is
     /**
      * @notice Initializes the contract with factory and allow list hook.
      * @param _factory Address of the LSSVMPairFactory.
-     * @param _allowListHook Address of the AllowListHook.
      * @param _minimumLockDuration Minimum lock duration for a pair.
-     * @param _sudoWrapper Address of the SudoWrapper contract.
      */
-    constructor(
-        address _factory,
-        address _allowListHook,
-        uint256 _minimumLockDuration,
-        address payable _sudoWrapper
-    ) {
-        require(
-            _factory != address(0) &&
-                _allowListHook != address(0) &&
-                _sudoWrapper != address(0),
-            "Invalid addresses"
-        );
+    constructor(address _factory, uint256 _minimumLockDuration) {
+        require(_factory != address(0), "Invalid factory address");
         require(
             _minimumLockDuration >= MIN_LOCK_DURATION,
             "Invalid lock duration"
         );
         factory = ILSSVMPairFactory(payable(_factory));
-        allowListHook = IAllowListHook(_allowListHook);
         minimumLockDuration = _minimumLockDuration;
-        sudoWrapper = _sudoWrapper;
     }
 
     /**
@@ -409,16 +395,16 @@ contract SudoFactoryWrapper is
     }
 
     /**
-     * @notice Updates the SudoWrapper address.
-     * @param _newSudoWrapper The new SudoWrapper address.
+     * @notice Updates the SudoVRFRouter address.
+     * @param _newSudoVRFRouter The new SudoVRFRouter address.
      */
-    function setSudoWrapper(
-        address payable _newSudoWrapper
+    function setSudoVRFRouter(
+        address payable _newSudoVRFRouter
     ) external onlyOwner {
-        require(_newSudoWrapper != address(0), "Invalid address");
+        require(_newSudoVRFRouter != address(0), "Invalid address");
 
-        sudoWrapper = _newSudoWrapper;
-        emit SudoWrapperUpdated(_newSudoWrapper);
+        sudoVRFRouter = _newSudoVRFRouter;
+        emit SudoVRFRouterUpdated(_newSudoVRFRouter);
     }
 
     /**
@@ -720,7 +706,7 @@ contract SudoFactoryWrapper is
         bool _isRandom
     ) internal {
         // Set up the allow list for the newly created pair
-        allowListHook.modifyAllowListSingleBuyer(_initialNFTIDs, sudoWrapper);
+        allowListHook.modifyAllowListSingleBuyer(_initialNFTIDs, sudoVRFRouter);
 
         // Set the address, unlock time, creator, and withdrawal status for the pair
         uint256 unlockTime = block.timestamp + _lockDuration;

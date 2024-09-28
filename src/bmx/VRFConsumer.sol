@@ -3,7 +3,7 @@ pragma solidity ^0.8.0;
 
 import {VRFConsumerBaseV2Plus} from "../chainlink-contracts/src/v0.8/vrf/dev/VRFConsumerBaseV2Plus.sol";
 import {VRFV2PlusClient} from "../chainlink-contracts/src/v0.8/vrf/dev/libraries/VRFV2PlusClient.sol";
-import "./SudoWrapper.sol";
+import {ISudoVRFRouter} from "./Interfaces.sol";
 
 /**
  * @title VRFConsumer
@@ -38,8 +38,8 @@ contract VRFConsumer is VRFConsumerBaseV2Plus {
     /// @notice Mapping from request ID to request status.
     mapping(uint256 => RequestStatus) public s_requests;
 
-    /// @notice The SudoWrapper contract instance.
-    SudoVRFWrapper public sudoWrapper;
+    /// @notice The SudoVRFRouter contract instance.
+    ISudoVRFRouter public sudoVRFRouter;
 
     /// @notice The key hash for the VRF requests.
     bytes32 public keyHash =
@@ -70,7 +70,7 @@ contract VRFConsumer is VRFConsumerBaseV2Plus {
 
     event RequestSent(uint256 requestId);
     event RequestFulfilled(uint256 requestId);
-    event SudoWrapperSet(address sudoWrapper);
+    event SudoVRFRouterSet(address sudoVRFRouter);
     event VRFConfigUpdated(
         uint32 callbackGasLimit,
         uint16 requestConfirmations,
@@ -94,8 +94,8 @@ contract VRFConsumer is VRFConsumerBaseV2Plus {
 
     modifier onlySudoWrapper() {
         require(
-            msg.sender == address(sudoWrapper),
-            "Only the SudoWrapper can call this function"
+            msg.sender == address(sudoVRFRouter),
+            "Only the SudoVRFRouter can call this function"
         );
         _;
     }
@@ -139,12 +139,14 @@ contract VRFConsumer is VRFConsumerBaseV2Plus {
     // =========================================
 
     /**
-     * @notice Set the SudoWrapper contract.
-     * @param _sudoWrapper The address of the SudoWrapper contract.
+     * @notice Set the SudoVRFRouter contract.
+     * @param _sudoVRFRouter The address of the SudoVRFRouter contract.
      */
-    function setSudoWrapper(address payable _sudoWrapper) external onlyOwner {
-        sudoWrapper = SudoVRFWrapper(_sudoWrapper);
-        emit SudoWrapperSet(_sudoWrapper);
+    function setSudoVRFRouter(
+        address payable _sudoVRFRouter
+    ) external onlyOwner {
+        sudoVRFRouter = ISudoVRFRouter(_sudoVRFRouter);
+        emit SudoVRFRouterSet(_sudoVRFRouter);
     }
 
     /**
@@ -198,8 +200,8 @@ contract VRFConsumer is VRFConsumerBaseV2Plus {
         uint256[] calldata _randomWords
     ) internal override {
         require(s_requests[_requestId].exists, "request not found");
-        // store results in SudoWrapper buyRequests
-        sudoWrapper.buyNFTsCallback(_requestId, _randomWords);
+        // store results in SudoVRFRouter buyRequests
+        sudoVRFRouter.buyNFTsCallback(_requestId, _randomWords);
 
         s_requests[_requestId].fulfilled = true;
         emit RequestFulfilled(_requestId);

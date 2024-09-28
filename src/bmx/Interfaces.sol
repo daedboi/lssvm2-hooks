@@ -190,7 +190,7 @@ interface IVRFConsumer {
     ) external returns (uint256 requestId);
 }
 
-interface ISudoVRFWrapper {
+interface ISudoVRFRouter {
     function buyNFTsCallback(
         uint256 requestId,
         uint256[] calldata randomWords

@@ -12,14 +12,14 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/security/ReentrancyGuard.
 import {ERC721Holder} from "@openzeppelin/contracts/token/ERC721/utils/ERC721Holder.sol";
 import {ERC1155Holder} from "@openzeppelin/contracts/token/ERC1155/utils/ERC1155Holder.sol";
 
-import {ILSSVMPairFactory, ILSSVMPair, ICurve, IAllowListHook, IVRFConsumer, ISudoVRFWrapper, ISudoFactoryWrapper} from "./Interfaces.sol";
+import {ILSSVMPairFactory, ILSSVMPair, IVRFConsumer, ISudoFactoryWrapper} from "./Interfaces.sol";
 
 /**
- * @title SudoVRFWrapper
+ * @title SudoVRFRouter
  * @author 0xdaedboi
- * @notice This contract is used as a router for buying and selling SudoSwap pairs with randomness enabled for buying NFTs.
+ * @notice This contract is used as a router for buying and selling SudoSwap pairs with Chainlink randomness enabled for buying NFTs.
  */
-contract SudoVRFWrapper is
+contract SudoVRFRouter is
     Ownable,
     ReentrancyGuard,
     ERC721Holder,
@@ -202,7 +202,10 @@ contract SudoVRFWrapper is
         bool isETHPair = _isETHPair(pair);
         uint256[] memory allPairNFTIds = pair.getAllIds();
 
-        if (request.nftAmount > allPairNFTIds.length || request.randomResult.length < request.nftAmount) {
+        if (
+            request.nftAmount > allPairNFTIds.length ||
+            request.randomResult.length < request.nftAmount
+        ) {
             // Not enough NFTs or random results; refund the user
             request.cancelled = true;
             _refundUser(msg.sender, request.inputAmount, pair);
