@@ -41,12 +41,12 @@ contract VRFConsumer is VRFConsumerBaseV2Plus {
     /// @notice The SudoVRFRouter contract instance.
     ISudoVRFRouter public sudoVRFRouter;
 
-    /// @notice The key hash for the VRF requests.
+    /// @notice The key hash for the VRF requests (2 gwei default).
     bytes32 public keyHash =
-        0xdc2f87677b01473c763cb0aee938ed3341512f6057324a584e5944e786144d70;
+        0x00b81b5a830cb0a4009fbd8904de511e28631e62ce5ad231373d3cdad373ccab;
 
     /// @notice The callback gas limit for the VRF requests.
-    uint32 public callbackGasLimit = 1_000_000;
+    uint32 public callbackGasLimit = 500_000;
 
     /// @notice The number of confirmations for the VRF requests.
     uint16 public requestConfirmations = 3;

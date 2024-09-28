@@ -179,6 +179,7 @@ interface ICurve {
 
 interface IAllowListHook {
     function modifyAllowListSingleBuyer(
+        address collection,
         uint256[] calldata nftIds,
         address buyer
     ) external;

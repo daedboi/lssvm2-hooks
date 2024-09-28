@@ -198,8 +198,8 @@ contract SudoFactoryWrapper is
                         _isBuy,
                         _isRandom,
                         _token == address(0), // isETH
-                        _token,
                         _nft,
+                        _token,
                         _bondingCurve,
                         _delta,
                         _spotPrice,
@@ -218,8 +218,8 @@ contract SudoFactoryWrapper is
                         _isBuy,
                         _isRandom,
                         _token == address(0), // isETH
-                        _token,
                         _nft,
+                        _token,
                         _bondingCurve,
                         _delta,
                         _spotPrice,
@@ -241,8 +241,8 @@ contract SudoFactoryWrapper is
                         _isBuy,
                         _isRandom,
                         _token == address(0), // isETH
-                        _token,
                         _nft,
+                        _token,
                         _bondingCurve,
                         _delta,
                         _spotPrice,
@@ -261,8 +261,8 @@ contract SudoFactoryWrapper is
                         _isBuy,
                         _isRandom,
                         _token == address(0), // isETH
-                        _token,
                         _nft,
+                        _token,
                         _bondingCurve,
                         _delta,
                         _spotPrice,
@@ -441,7 +441,7 @@ contract SudoFactoryWrapper is
             _transferERC721Tokens(
                 _params.sender,
                 address(this),
-                _params.nft,
+                nft,
                 _params.initialNFTIDs
             );
             nft.setApprovalForAll(address(factory), true);
@@ -500,7 +500,7 @@ contract SudoFactoryWrapper is
             _transferERC721Tokens(
                 _params.sender,
                 address(this),
-                _params.nft,
+                nft,
                 _params.initialNFTIDs
             );
             nft.setApprovalForAll(address(factory), true);
@@ -705,8 +705,13 @@ contract SudoFactoryWrapper is
         bool _isBuy,
         bool _isRandom
     ) internal {
+        address nft = _pair.nft();
         // Set up the allow list for the newly created pair
-        allowListHook.modifyAllowListSingleBuyer(_initialNFTIDs, sudoVRFRouter);
+        allowListHook.modifyAllowListSingleBuyer(
+            nft,
+            _initialNFTIDs,
+            sudoVRFRouter
+        );
 
         // Set the address, unlock time, creator, and withdrawal status for the pair
         uint256 unlockTime = block.timestamp + _lockDuration;
@@ -721,7 +726,6 @@ contract SudoFactoryWrapper is
 
         // Revoke approvals after pair creation to enhance security
         if (_initialNFTIDs.length > 0) {
-            address nft = _pair.nft();
             if (_isERC721) {
                 IERC721(nft).setApprovalForAll(address(factory), false);
             } else {
@@ -786,7 +790,7 @@ contract SudoFactoryWrapper is
             amountERC1155 = 0;
 
             pair.withdrawERC721(IERC721(nft), nftIds);
-            _transferERC721Tokens(address(this), sender, nft, nftIds);
+            _transferERC721Tokens(address(this), sender, IERC721(nft), nftIds);
         } else {
             // Withdraw ERC1155 NFTs
             nftIds = new uint256[](1);
@@ -821,11 +825,11 @@ contract SudoFactoryWrapper is
     function _transferERC721Tokens(
         address _from,
         address _to,
-        address _nftContract,
+        IERC721 _nftContract,
         uint256[] memory _tokenIDs
     ) internal {
         for (uint256 i = 0; i < _tokenIDs.length; ) {
-            IERC721(_nftContract).safeTransferFrom(_from, _to, _tokenIDs[i]);
+            _nftContract.safeTransferFrom(_from, _to, _tokenIDs[i]);
 
             // Gas savings
             unchecked {
