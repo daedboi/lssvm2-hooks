@@ -64,12 +64,33 @@ contract SudoFactoryWrapper is
     /// @notice Mapping to store if a pair is a random pair (VRF ERC721 buy pool)
     mapping(address => bool) public isRandomPair;
 
+    // =========================================
+    // Structs
+    // =========================================
+
     /// @notice Struct to store pair information
     struct PairInfo {
         address pairAddress; // Pair address
         uint256 pairUnlockTime; // Timestamp when the pair will be unlocked
         address pairCreator; // Address of the pair creator
         bool hasWithdrawn; // Whether the pair has been withdrawn from
+    }
+
+    /// @notice Struct to store create pair parameters
+    struct CreatePairParams {
+        address sender;
+        bool isBuy;
+        bool isRandom;
+        bool isETH;
+        address nft;
+        address token;
+        address bondingCurve;
+        uint128 delta;
+        uint128 spotPrice;
+        uint256 lockDuration;
+        uint256[] initialNFTIDs;
+        uint256 initialTokenBalance;
+        uint256 initialNFTBalance;
     }
 
     // =========================================
@@ -149,9 +170,8 @@ contract SudoFactoryWrapper is
      * @param _delta Delta parameter for the bonding curve.
      * @param _spotPrice Initial spot price for the pair.
      * @param _lockDuration Duration for which the pair is locked.
-     * @param _initialNFTIDs Array of initial NFT IDs to be added (ERC721).
+     * @param _initialNFTIDs Array of initial NFT IDs to be added for ERC7721 or single ID for ERC1155.
      * @param _initialTokenBalance Initial token balance to be added (ERC20).
-     * @param _nftId Specific NFT ID for ERC1155 pairs.
      * @param _initialNFTBalance Initial NFT balance for ERC1155 pairs.
      * @return pairAddress Address of the created pair.
      */
@@ -160,13 +180,12 @@ contract SudoFactoryWrapper is
         bool _isRandom,
         address _nft,
         address _token,
-        ICurve _bondingCurve,
+        address _bondingCurve,
         uint128 _delta,
         uint128 _spotPrice,
         uint256 _lockDuration,
         uint256[] calldata _initialNFTIDs,
         uint256 _initialTokenBalance,
-        uint256 _nftId,
         uint256 _initialNFTBalance
     ) external payable nonReentrant returns (address pairAddress) {
         require(
@@ -177,69 +196,87 @@ contract SudoFactoryWrapper is
             _lockDuration >= minimumLockDuration,
             "Lock duration must be at least 24 hours"
         );
-
-        address sender = msg.sender;
-        bool isETH = _token == address(0);
-        bool isERC721 = _supportsInterface(_nft, type(IERC721).interfaceId);
-        bool isERC1155 = _supportsInterface(_nft, type(IERC1155).interfaceId);
-
-        require(isERC721 || isERC1155, "Invalid NFT");
+        require(
+            _supportsInterface(_nft, type(IERC721).interfaceId) ||
+                _supportsInterface(_nft, type(IERC1155).interfaceId),
+            "Invalid NFT"
+        );
 
         // Check if NFT is ERC721 or ERC1155, then if token is ETH or ERC20
-        if (isERC721) {
-            if (isETH) {
+        if (_supportsInterface(_nft, type(IERC721).interfaceId)) {
+            if (_token == address(0)) {
                 pairAddress = _createERC721ETHPair(
-                    sender,
-                    _isBuy,
-                    _isRandom,
-                    _nft,
-                    _bondingCurve,
-                    _delta,
-                    _spotPrice,
-                    _lockDuration,
-                    _initialNFTIDs
+                    CreatePairParams(
+                        msg.sender,
+                        _isBuy,
+                        _isRandom,
+                        _token == address(0),
+                        _token,
+                        _nft,
+                        _bondingCurve,
+                        _delta,
+                        _spotPrice,
+                        _lockDuration,
+                        _initialNFTIDs,
+                        _initialTokenBalance,
+                        _initialNFTBalance
+                    )
                 );
             } else {
                 pairAddress = _createERC721ERC20Pair(
-                    sender,
-                    _isBuy,
-                    _isRandom,
-                    _nft,
-                    _bondingCurve,
-                    _delta,
-                    _spotPrice,
-                    _lockDuration,
-                    _initialNFTIDs,
-                    _initialTokenBalance,
-                    _token
+                    CreatePairParams(
+                        msg.sender,
+                        _isBuy,
+                        _isRandom,
+                        _token == address(0),
+                        _token,
+                        _nft,
+                        _bondingCurve,
+                        _delta,
+                        _spotPrice,
+                        _lockDuration,
+                        _initialNFTIDs,
+                        _initialTokenBalance,
+                        _initialNFTBalance
+                    )
                 );
             }
-        } else if (isERC1155) {
-            if (isETH) {
+        } else if (_supportsInterface(_nft, type(IERC1155).interfaceId)) {
+            if (_token == address(0)) {
                 pairAddress = _createERC1155ETHPair(
-                    sender,
-                    _isBuy,
-                    _nft,
-                    _bondingCurve,
-                    _delta,
-                    _spotPrice,
-                    _lockDuration,
-                    _nftId,
-                    _initialNFTBalance
+                    CreatePairParams(
+                        msg.sender,
+                        _isBuy,
+                        _isRandom,
+                        _token == address(0),
+                        _token,
+                        _nft,
+                        _bondingCurve,
+                        _delta,
+                        _spotPrice,
+                        _lockDuration,
+                        _initialNFTIDs,
+                        _initialTokenBalance,
+                        _initialNFTBalance
+                    )
                 );
             } else {
                 pairAddress = _createERC1155ERC20Pair(
-                    sender,
-                    _isBuy,
-                    _nft,
-                    _bondingCurve,
-                    _delta,
-                    _spotPrice,
-                    _lockDuration,
-                    _nftId,
-                    _initialNFTBalance,
-                    _initialTokenBalance,
-                    _token
+                    CreatePairParams(
+                        msg.sender,
+                        _isBuy,
+                        _isRandom,
+                        _token == address(0),
+                        _token,
+                        _nft,
+                        _bondingCurve,
+                        _delta,
+                        _spotPrice,
+                        _lockDuration,
+                        _initialNFTIDs,
+                        _initialTokenBalance,
+                        _initialNFTBalance
+                    )
                 );
             }
         }
@@ -394,68 +431,56 @@ contract SudoFactoryWrapper is
 
     /**
      * @notice Creates an ERC721-ETH pair.
-     * @param _sender Address initiating the pair creation.
-     * @param _isBuy Determines if the pair is a buy or sell pool.
-     * @param _isRandom Determines if the pair is a random pair (only for ERC721 buy pools).
-     * @param _nft Address of the ERC721 NFT contract.
-     * @param _bondingCurve Address of the bonding curve contract.
-     * @param _delta Delta parameter for the bonding curve.
-     * @param _spotPrice Initial spot price for the pair.
-     * @param _lockDuration Duration for which the pair is locked.
-     * @param _initialNFTIDs Array of initial ERC721 NFT IDs to add.
+     * @param _params The CreatePairParams for creating the pair.
      * @return pairAddress Address of the created pair.
      */
     function _createERC721ETHPair(
-        address _sender,
-        bool _isBuy,
-        bool _isRandom,
-        address _nft,
-        ICurve _bondingCurve,
-        uint128 _delta,
-        uint128 _spotPrice,
-        uint256 _lockDuration,
-        uint256[] calldata _initialNFTIDs
+        CreatePairParams memory _params
     ) internal returns (address pairAddress) {
-        ILSSVMPair pair;
-        IERC721 nft = IERC721(_nft);
+        IERC721 nft = IERC721(_params.nft);
         // Transfer initial NFTs and approve factory
-        if (_initialNFTIDs.length > 0) {
-            _transferERC721Tokens(_sender, address(this), _nft, _initialNFTIDs);
+        if (_params.initialNFTIDs.length > 0) {
+            _transferERC721Tokens(
+                _params.sender,
+                address(this),
+                _params.nft,
+                _params.initialNFTIDs
+            );
             nft.setApprovalForAll(address(factory), true);
         }
 
         // Determine pool type
-        ILSSVMPair.PoolType poolType = _isBuy
+        ILSSVMPair.PoolType poolType = _params.isBuy
             ? ILSSVMPair.PoolType.TOKEN
             : ILSSVMPair.PoolType.NFT;
 
-        pair = factory.createPairERC721ETH{value: msg.value}(
+        ILSSVMPair pair = factory.createPairERC721ETH{value: msg.value}(
             nft,
-            _bondingCurve,
-            payable(_sender),
+            ICurve(_params.bondingCurve),
+            payable(_params.sender),
             poolType,
-            _delta,
+            _params.delta,
             0,
-            _spotPrice,
+            _params.spotPrice,
             address(0),
-            _initialNFTIDs,
+            _params.initialNFTIDs,
             address(allowListHook),
             address(0)
         );
 
         // Set random pair if sell pool and isRandom
-        isRandomPair[address(pair)] = !_isBuy && _isRandom;
+        isRandomPair[address(pair)] = !_params.isBuy && _params.isRandom;
 
         // Update pair info and emit event
         _finalizePairCreation(
-            _sender,
+            _params.sender,
             pair,
-            _initialNFTIDs,
-            _lockDuration,
+            _params.initialNFTIDs,
+            _params.lockDuration,
             true,
             true,
-            _isBuy,
-            _isRandom
+            _params.isBuy,
+            _params.isRandom
         );
 
         return address(pair);
@@ -463,54 +488,38 @@ contract SudoFactoryWrapper is
 
     /**
      * @notice Creates an ERC721-ERC20 pair.
-     * @param _sender Address initiating the pair creation.
-     * @param _isBuy Determines if the pair is a buy or sell pool.
-     * @param _isRandom Determines if the pair is a random pair (only for ERC721 buy pools).
-     * @param _nft Address of the ERC721 NFT contract.
-     * @param _bondingCurve Address of the bonding curve contract.
-     * @param _delta Delta parameter for the bonding curve.
-     * @param _spotPrice Initial spot price for the pair.
-     * @param _lockDuration Duration for which the pair is locked.
-     * @param _initialNFTIDs Array of initial ERC721 NFT IDs to add.
-     * @param _initialTokenBalance Initial ERC20 token balance to add.
-     * @param _token Address of the ERC20 token.
+     * @param _params The CreatePairParams for creating the pair.
      * @return pairAddress Address of the created pair.
      */
     function _createERC721ERC20Pair(
-        address _sender,
-        bool _isBuy,
-        bool _isRandom,
-        address _nft,
-        ICurve _bondingCurve,
-        uint128 _delta,
-        uint128 _spotPrice,
-        uint256 _lockDuration,
-        uint256[] calldata _initialNFTIDs,
-        uint256 _initialTokenBalance,
-        address _token
+        CreatePairParams memory _params
     ) internal returns (address pairAddress) {
-        ILSSVMPair pair;
-        IERC721 nft = IERC721(_nft);
-        ERC20 token = ERC20(_token);
+        IERC721 nft = IERC721(_params.nft);
+        ERC20 token = ERC20(_params.token);
 
         // Transfer initial NFTs and approve factory
-        if (_initialNFTIDs.length > 0) {
-            _transferERC721Tokens(_sender, address(this), _nft, _initialNFTIDs);
+        if (_params.initialNFTIDs.length > 0) {
+            _transferERC721Tokens(
+                _params.sender,
+                address(this),
+                _params.nft,
+                _params.initialNFTIDs
+            );
             nft.setApprovalForAll(address(factory), true);
         }
 
         // Transfer initial ERC20 tokens and approve factory
-        if (_initialTokenBalance > 0) {
+        if (_params.initialTokenBalance > 0) {
             token.safeTransferFrom(
-                _sender,
+                _params.sender,
                 address(this),
-                _initialTokenBalance
+                _params.initialTokenBalance
             );
-            token.safeApprove(address(factory), _initialTokenBalance);
+            token.safeApprove(address(factory), _params.initialTokenBalance);
         }
 
         // Determine pool type
-        ILSSVMPair.PoolType poolType = _isBuy
+        ILSSVMPair.PoolType poolType = _params.isBuy
             ? ILSSVMPair.PoolType.TOKEN
             : ILSSVMPair.PoolType.NFT;
 
@@ -518,33 +527,33 @@ contract SudoFactoryWrapper is
             memory params = ILSSVMPairFactory.CreateERC721ERC20PairParams({
                 token: token,
                 nft: nft,
-                bondingCurve: _bondingCurve,
-                assetRecipient: payable(_sender),
+                bondingCurve: ICurve(_params.bondingCurve),
+                assetRecipient: payable(_params.sender),
                 poolType: poolType,
-                delta: _delta,
+                delta: _params.delta,
                 fee: 0,
-                spotPrice: _spotPrice,
+                spotPrice: _params.spotPrice,
                 propertyChecker: address(0),
-                initialNFTIDs: _initialNFTIDs,
-                initialTokenBalance: _initialTokenBalance,
+                initialNFTIDs: _params.initialNFTIDs,
+                initialTokenBalance: _params.initialTokenBalance,
                 hookAddress: address(allowListHook),
                 referralAddress: address(0)
             });
-        pair = factory.createPairERC721ERC20(params);
+        ILSSVMPair pair = factory.createPairERC721ERC20(params);
 
         // Set random pair if sell pool and isRandom
-        isRandomPair[address(pair)] = !_isBuy && _isRandom;
+        isRandomPair[address(pair)] = !_params.isBuy && _params.isRandom;
 
         // Update pair info and emit event
         _finalizePairCreation(
-            _sender,
+            _params.sender,
             pair,
-            _initialNFTIDs,
-            _lockDuration,
+            _params.initialNFTIDs,
+            _params.lockDuration,
             true,
             false,
-            _isBuy,
-            _isRandom
+            _params.isBuy,
+            _params.isRandom
         );
 
         return address(pair);
@@ -552,75 +561,54 @@ contract SudoFactoryWrapper is
 
     /**
      * @notice Creates an ERC1155-ETH pair.
-     * @param _sender Address initiating the pair creation.
-     * @param _isBuy Determines if the pair is a buy or sell pool.
-     * @param _nft Address of the ERC1155 NFT contract.
-     * @param _bondingCurve Address of the bonding curve contract.
-     * @param _delta Delta parameter for the bonding curve.
-     * @param _spotPrice Initial spot price for the pair.
-     * @param _lockDuration Duration for which the pair is locked.
-     * @param _nftId Specific ERC1155 NFT ID to add.
-     * @param _initialNFTBalance Initial ERC1155 NFT balance to add.
+     * @param _params The CreatePairParams for creating the pair.
      * @return pairAddress Address of the created pair.
      */
     function _createERC1155ETHPair(
-        address _sender,
-        bool _isBuy,
-        address _nft,
-        ICurve _bondingCurve,
-        uint128 _delta,
-        uint128 _spotPrice,
-        uint256 _lockDuration,
-        uint256 _nftId,
-        uint256 _initialNFTBalance
+        CreatePairParams memory _params
     ) internal returns (address pairAddress) {
-        ILSSVMPair pair;
-        IERC1155 nft = IERC1155(_nft);
+        IERC1155 nft = IERC1155(_params.nft);
 
         // Transfer initial NFT amount and approve factory
-        if (_initialNFTBalance > 0) {
+        if (_params.initialNFTBalance > 0) {
             nft.safeTransferFrom(
-                _sender,
+                _params.sender,
                 address(this),
-                _nftId,
-                _initialNFTBalance,
+                _params.initialNFTIDs[0],
+                _params.initialNFTBalance,
                 bytes("")
             );
             nft.setApprovalForAll(address(factory), true);
         }
 
         // Determine pool type
-        ILSSVMPair.PoolType poolType = _isBuy
+        ILSSVMPair.PoolType poolType = _params.isBuy
             ? ILSSVMPair.PoolType.TOKEN
             : ILSSVMPair.PoolType.NFT;
 
-        pair = factory.createPairERC1155ETH{value: msg.value}(
+        ILSSVMPair pair = factory.createPairERC1155ETH{value: msg.value}(
             nft,
-            _bondingCurve,
-            payable(_sender),
+            ICurve(_params.bondingCurve),
+            payable(_params.sender),
             poolType,
-            _delta,
+            _params.delta,
             0,
-            _spotPrice,
-            _nftId,
-            _initialNFTBalance,
+            _params.spotPrice,
+            _params.initialNFTIDs[0],
+            _params.initialNFTBalance,
             address(allowListHook),
             address(0)
         );
 
-        // Required for params
-        uint256[] memory nftIds = new uint256[](1);
-        nftIds[0] = _nftId;
-
         // Update pair info and emit event
         _finalizePairCreation(
-            _sender,
+            _params.sender,
             pair,
-            nftIds,
-            _lockDuration,
+            _params.initialNFTIDs,
+            _params.lockDuration,
             false,
             true,
-            _isBuy,
+            _params.isBuy,
             false
         );
 
@@ -629,60 +617,39 @@ contract SudoFactoryWrapper is
 
     /**
      * @notice Creates an ERC1155-ERC20 pair.
-     * @param _sender Address initiating the pair creation.
-     * @param _isBuy Determines if the pair is a buy or sell pool.
-     * @param _nft Address of the ERC1155 NFT contract.
-     * @param _bondingCurve Address of the bonding curve contract.
-     * @param _delta Delta parameter for the bonding curve.
-     * @param _spotPrice Initial spot price for the pair.
-     * @param _lockDuration Duration for which the pair is locked.
-     * @param _nftId Specific ERC1155 NFT ID to add.
-     * @param _initialNFTBalance Initial ERC1155 NFT balance to add.
-     * @param _initialTokenBalance Initial ERC20 token balance to add.
-     * @param _token Address of the ERC20 token.
+     * @param _params The CreatePairParams for creating the pair.
      * @return pairAddress Address of the created pair.
      */
     function _createERC1155ERC20Pair(
-        address _sender,
-        bool _isBuy,
-        address _nft,
-        ICurve _bondingCurve,
-        uint128 _delta,
-        uint128 _spotPrice,
-        uint256 _lockDuration,
-        uint256 _nftId,
-        uint256 _initialNFTBalance,
-        uint256 _initialTokenBalance,
-        address _token
+        CreatePairParams memory _params
     ) internal returns (address pairAddress) {
-        ILSSVMPair pair;
-        IERC1155 nft = IERC1155(_nft);
-        ERC20 token = ERC20(_token);
+        IERC1155 nft = IERC1155(_params.nft);
+        ERC20 token = ERC20(_params.token);
 
         // Transfer initial NFT amount and approve factory
-        if (_initialNFTBalance > 0) {
+        if (_params.initialNFTBalance > 0) {
             nft.safeTransferFrom(
-                _sender,
+                _params.sender,
                 address(this),
-                _nftId,
-                _initialNFTBalance,
+                _params.initialNFTIDs[0],
+                _params.initialNFTBalance,
                 bytes("")
             );
             nft.setApprovalForAll(address(factory), true);
         }
 
         // Transfer initial ERC20 tokens and approve factory
-        if (_initialTokenBalance > 0) {
+        if (_params.initialTokenBalance > 0) {
             token.safeTransferFrom(
-                _sender,
+                _params.sender,
                 address(this),
-                _initialTokenBalance
+                _params.initialTokenBalance
             );
-            token.safeApprove(address(factory), _initialTokenBalance);
+            token.safeApprove(address(factory), _params.initialTokenBalance);
         }
 
         // Determine pool type
-        ILSSVMPair.PoolType poolType = _isBuy
+        ILSSVMPair.PoolType poolType = _params.isBuy
             ? ILSSVMPair.PoolType.TOKEN
             : ILSSVMPair.PoolType.NFT;
 
@@ -690,33 +657,29 @@ contract SudoFactoryWrapper is
             memory params = ILSSVMPairFactory.CreateERC1155ERC20PairParams({
                 token: token,
                 nft: nft,
-                bondingCurve: _bondingCurve,
-                assetRecipient: payable(_sender),
+                bondingCurve: ICurve(_params.bondingCurve),
+                assetRecipient: payable(_params.sender),
                 poolType: poolType,
-                delta: _delta,
+                delta: _params.delta,
                 fee: 0,
-                spotPrice: _spotPrice,
-                nftId: _nftId,
-                initialNFTBalance: _initialNFTBalance,
-                initialTokenBalance: _initialTokenBalance,
+                spotPrice: _params.spotPrice,
+                nftId: _params.initialNFTIDs[0],
+                initialNFTBalance: _params.initialNFTBalance,
+                initialTokenBalance: _params.initialTokenBalance,
                 hookAddress: address(allowListHook),
                 referralAddress: address(0)
             });
-        pair = factory.createPairERC1155ERC20(params);
-
-        // Required for params
-        uint256[] memory nftIds = new uint256[](1);
-        nftIds[0] = _nftId;
+        ILSSVMPair pair = factory.createPairERC1155ERC20(params);
 
         // Update pair info and emit event
         _finalizePairCreation(
-            _sender,
+            _params.sender,
             pair,
-            nftIds,
-            _lockDuration,
+            _params.initialNFTIDs,
+            _params.lockDuration,
             false,
             false,
-            _isBuy,
+            _params.isBuy,
             false
         );
 

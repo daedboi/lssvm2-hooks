@@ -4,7 +4,16 @@ pragma solidity ^0.8.0;
 import {ERC20} from "solmate/tokens/ERC20.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {IERC1155} from "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
-import {CurveErrorCodes} from "../bonding-curves/CurveErrorCodes.sol";
+
+contract CurveErrorCodes {
+    enum Error {
+        OK, // No error
+        INVALID_NUMITEMS, // The numItem value is 0
+        SPOT_PRICE_OVERFLOW, // The updated spot price doesn't fit into 128 bits
+        DELTA_OVERFLOW, // The updated delta doesn't fit into 128 bits
+        SPOT_PRICE_UNDERFLOW // The updated spot price goes too low
+    }
+}
 
 interface ILSSVMPair {
     enum PoolType {
