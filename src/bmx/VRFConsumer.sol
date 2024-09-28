@@ -92,7 +92,7 @@ contract VRFConsumer is VRFConsumerBaseV2Plus {
     // Modifiers
     // =========================================
 
-    modifier onlySudoWrapper() {
+    modifier onlySudoVRFRouter() {
         require(
             msg.sender == address(sudoVRFRouter),
             "Only the SudoVRFRouter can call this function"
@@ -111,7 +111,7 @@ contract VRFConsumer is VRFConsumerBaseV2Plus {
      */
     function requestRandomWords(
         uint32 _numWords
-    ) external onlySudoWrapper returns (uint256 requestId) {
+    ) external onlySudoVRFRouter returns (uint256 requestId) {
         require(_numWords <= MAX_RANDOM_WORDS, "Too many random words");
         // Will revert if subscription is not set and funded.
         requestId = s_vrfCoordinator.requestRandomWords(
