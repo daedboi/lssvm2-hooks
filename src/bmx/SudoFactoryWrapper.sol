@@ -202,33 +202,16 @@ contract SudoFactoryWrapper is
             "Invalid NFT"
         );
 
-        // Check if NFT is ERC721 or ERC1155, then if token is ETH or ERC20
+        // Check if NFT is ERC721
         if (_supportsInterface(_nft, type(IERC721).interfaceId)) {
+            // Check if token is ETH
             if (_token == address(0)) {
                 pairAddress = _createERC721ETHPair(
                     CreatePairParams(
                         msg.sender,
                         _isBuy,
                         _isRandom,
-                        _token == address(0),
-                        _token,
-                        _nft,
-                        _bondingCurve,
-                        _delta,
-                        _spotPrice,
-                        _lockDuration,
-                        _initialNFTIDs,
-                        _initialTokenBalance,
-                        _initialNFTBalance
-                    )
-                );
-            } else {
-                pairAddress = _createERC721ERC20Pair(
-                    CreatePairParams(
-                        msg.sender,
-                        _isBuy,
-                        _isRandom,
-                        _token == address(0),
+                        _token == address(0), // isETH
                         _token,
                         _nft,
                         _bondingCurve,
@@ -241,32 +224,37 @@ contract SudoFactoryWrapper is
                     )
                 );
             }
-        } else if (_supportsInterface(_nft, type(IERC1155).interfaceId)) {
+            // Token is ERC20
+            else {
+                pairAddress = _createERC721ERC20Pair(
+                    CreatePairParams(
+                        msg.sender,
+                        _isBuy,
+                        _isRandom,
+                        _token == address(0), // isETH
+                        _token,
+                        _nft,
+                        _bondingCurve,
+                        _delta,
+                        _spotPrice,
+                        _lockDuration,
+                        _initialNFTIDs,
+                        _initialTokenBalance,
+                        _initialNFTBalance
+                    )
+                );
+            }
+        }
+        // Check if NFT is ERC1155
+        else if (_supportsInterface(_nft, type(IERC1155).interfaceId)) {
+            // Check if token is ETH
             if (_token == address(0)) {
                 pairAddress = _createERC1155ETHPair(
                     CreatePairParams(
                         msg.sender,
                         _isBuy,
                         _isRandom,
-                        _token == address(0),
-                        _token,
-                        _nft,
-                        _bondingCurve,
-                        _delta,
-                        _spotPrice,
-                        _lockDuration,
-                        _initialNFTIDs,
-                        _initialTokenBalance,
-                        _initialNFTBalance
-                    )
-                );
-            } else {
-                pairAddress = _createERC1155ERC20Pair(
-                    CreatePairParams(
-                        msg.sender,
-                        _isBuy,
-                        _isRandom,
-                        _token == address(0),
+                        _token == address(0), // isETH
                         _token,
                         _nft,
                         _bondingCurve,
@@ -279,6 +267,30 @@ contract SudoFactoryWrapper is
                     )
                 );
             }
+            // Token is ERC20
+            else {
+                pairAddress = _createERC1155ERC20Pair(
+                    CreatePairParams(
+                        msg.sender,
+                        _isBuy,
+                        _isRandom,
+                        _token == address(0), // isETH
+                        _token,
+                        _nft,
+                        _bondingCurve,
+                        _delta,
+                        _spotPrice,
+                        _lockDuration,
+                        _initialNFTIDs,
+                        _initialTokenBalance,
+                        _initialNFTBalance
+                    )
+                );
+            }
+        }
+        // Invalid NFT
+        else {
+            revert("Invalid NFT");
         }
 
         return pairAddress;
