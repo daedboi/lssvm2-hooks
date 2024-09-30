@@ -46,11 +46,16 @@ contract SudoFactoryWrapper is
     /// @notice Instance of the AllowListHook for managing allowed addresses
     IAllowListHook public allowListHook;
 
-    /// @notice Address of the SudoVRFRouter contract (needs to be whitelisted in AllowListHook)
+    /// @notice Address of the SudoVRFRouter contract.
+    /// @dev Needs to be whitelisted in AllowListHook and set as asset recipient for buy pairs.
     address public sudoVRFRouter;
 
     /// @notice Minimum duration that a pair must remain locked
     uint256 public minimumLockDuration;
+
+    /// @notice Array of all buy pairs created by this factory wrapper.
+    /// @dev Used to update all asset recipients for buy pairs when sudoVRFRouter is updated.
+    address[] public buyPairs;
 
     /// @notice Mapping to store pair information
     mapping(address => PairInfo) public pairInfo;
@@ -114,7 +119,13 @@ contract SudoFactoryWrapper is
         uint256 amountERC1155
     );
     event AllowListHookUpdated(address newAllowListHook);
-    event SudoVRFRouterUpdated(address newSudoVRFRouter);
+    event SudoVRFRouterConfigUpdated(
+        address newSudoVRFRouter,
+        uint256 pairOffset,
+        uint256 pairLimit,
+        uint256 allowListOffset,
+        uint256 allowListLimit
+    );
     event MinimumLockDurationUpdated(uint256 newMinimumLockDuration);
 
     // =========================================
@@ -372,6 +383,7 @@ contract SudoFactoryWrapper is
         for (uint256 i = _offset; i < end; ) {
             pairsInfo[i - _offset] = pairInfo[pairs[i]];
 
+            // gas savings
             unchecked {
                 ++i;
             }
@@ -395,16 +407,58 @@ contract SudoFactoryWrapper is
     }
 
     /**
-     * @notice Updates the SudoVRFRouter address.
+     * @notice Updates the SudoVRFRouter address, also updates allow list hook and all buy pairs with new router address.
      * @param _newSudoVRFRouter The new SudoVRFRouter address.
+     * @param _pairOffset The offset of the pairs to update.
+     * @param _pairLimit The limit of the pairs to update. Set to 0 to not update.
+     * @param _allowListOffset The offset of the allow list to update.
+     * @param _allowListLimit The limit of the allow list to update. Set to 0 to not update.
      */
-    function setSudoVRFRouter(
-        address payable _newSudoVRFRouter
+    function updateSudoVRFRouterConfig(
+        address payable _newSudoVRFRouter,
+        uint256 _pairOffset,
+        uint256 _pairLimit,
+        uint256 _allowListOffset,
+        uint256 _allowListLimit
     ) external onlyOwner {
-        require(_newSudoVRFRouter != address(0), "Invalid address");
+        require(_newSudoVRFRouter != address(0), "Invalid new router");
 
         sudoVRFRouter = _newSudoVRFRouter;
-        emit SudoVRFRouterUpdated(_newSudoVRFRouter);
+
+        if (_allowListLimit != 0) {
+            // AllowListHook already checks if offset is valid
+            allowListHook.updateAllowListWithNewRouter(
+                _newSudoVRFRouter,
+                _allowListOffset,
+                _allowListLimit
+            );
+        }
+
+        // Update only buy pairs with new asset recipient
+        if (_pairLimit != 0) {
+            require(_pairOffset < buyPairs.length, "Invalid pair offset");
+            uint256 end = _pairOffset + _pairLimit > buyPairs.length
+                ? buyPairs.length
+                : _pairOffset + _pairLimit;
+            for (uint256 i = _pairOffset; i < end; ) {
+                ILSSVMPair(buyPairs[i]).changeAssetRecipient(
+                    payable(_newSudoVRFRouter)
+                );
+
+                // gas savings
+                unchecked {
+                    ++i;
+                }
+            }
+        }
+
+        emit SudoVRFRouterConfigUpdated(
+            _newSudoVRFRouter,
+            _pairOffset,
+            _pairLimit,
+            _allowListOffset,
+            _allowListLimit
+        );
     }
 
     /**
@@ -436,8 +490,8 @@ contract SudoFactoryWrapper is
         CreatePairParams memory _params
     ) internal returns (address pairAddress) {
         IERC721 nft = IERC721(_params.nft);
-        // Transfer initial NFTs and approve factory
-        if (_params.initialNFTIDs.length > 0) {
+        // Transfer initial NFTs and approve factory if pool is a sell pool
+        if (!_params.isBuy && _params.initialNFTIDs.length > 0) {
             _transferERC721Tokens(
                 _params.sender,
                 address(this),
@@ -455,13 +509,13 @@ contract SudoFactoryWrapper is
         ILSSVMPair pair = factory.createPairERC721ETH{value: msg.value}(
             nft,
             ICurve(_params.bondingCurve),
-            payable(_params.sender),
+            _params.isBuy ? payable(sudoVRFRouter) : payable(_params.sender), // If a buy pool, set asset recipient to sudoVRFRouter for AllowListHook to work
             poolType,
             _params.delta,
             0,
             _params.spotPrice,
             address(0),
-            _params.initialNFTIDs,
+            _params.isBuy ? new uint256[](0) : _params.initialNFTIDs,
             address(allowListHook),
             address(0)
         );
@@ -495,8 +549,8 @@ contract SudoFactoryWrapper is
         IERC721 nft = IERC721(_params.nft);
         ERC20 token = ERC20(_params.token);
 
-        // Transfer initial NFTs and approve factory
-        if (_params.initialNFTIDs.length > 0) {
+        // Transfer initial NFTs and approve factory if pool is a sell pool
+        if (!_params.isBuy && _params.initialNFTIDs.length > 0) {
             _transferERC721Tokens(
                 _params.sender,
                 address(this),
@@ -521,19 +575,25 @@ contract SudoFactoryWrapper is
             ? ILSSVMPair.PoolType.TOKEN
             : ILSSVMPair.PoolType.NFT;
 
-        ILSSVMPairFactory.CreateERC721ERC20PairParams
-            memory params = ILSSVMPairFactory.CreateERC721ERC20PairParams({
+        ILSSVMPairFactory.CreateERC721ERC20PairParams memory params = ILSSVMPairFactory
+            .CreateERC721ERC20PairParams({
                 token: token,
                 nft: nft,
                 bondingCurve: ICurve(_params.bondingCurve),
-                assetRecipient: payable(_params.sender),
+                assetRecipient: _params.isBuy // If a buy pool, set asset recipient to sudoVRFRouter for AllowListHook to work
+                    ? payable(sudoVRFRouter)
+                    : payable(_params.sender),
                 poolType: poolType,
                 delta: _params.delta,
                 fee: 0,
                 spotPrice: _params.spotPrice,
                 propertyChecker: address(0),
-                initialNFTIDs: _params.initialNFTIDs,
-                initialTokenBalance: _params.initialTokenBalance,
+                initialNFTIDs: _params.isBuy
+                    ? new uint256[](0)
+                    : _params.initialNFTIDs,
+                initialTokenBalance: _params.isBuy
+                    ? _params.initialTokenBalance
+                    : 0,
                 hookAddress: address(allowListHook),
                 referralAddress: address(0)
             });
@@ -567,8 +627,8 @@ contract SudoFactoryWrapper is
     ) internal returns (address pairAddress) {
         IERC1155 nft = IERC1155(_params.nft);
 
-        // Transfer initial NFT amount and approve factory
-        if (_params.initialNFTBalance > 0) {
+        // Transfer initial NFT amount and approve factory if pool is a sell pool
+        if (!_params.isBuy && _params.initialNFTBalance > 0) {
             nft.safeTransferFrom(
                 _params.sender,
                 address(this),
@@ -587,13 +647,13 @@ contract SudoFactoryWrapper is
         ILSSVMPair pair = factory.createPairERC1155ETH{value: msg.value}(
             nft,
             ICurve(_params.bondingCurve),
-            payable(_params.sender),
+            _params.isBuy ? payable(sudoVRFRouter) : payable(_params.sender), // If a buy pool, set asset recipient to sudoVRFRouter for AllowListHook to work
             poolType,
             _params.delta,
             0,
             _params.spotPrice,
             _params.initialNFTIDs[0],
-            _params.initialNFTBalance,
+            _params.isBuy ? 0 : _params.initialNFTBalance,
             address(allowListHook),
             address(0)
         );
@@ -624,8 +684,8 @@ contract SudoFactoryWrapper is
         IERC1155 nft = IERC1155(_params.nft);
         ERC20 token = ERC20(_params.token);
 
-        // Transfer initial NFT amount and approve factory
-        if (_params.initialNFTBalance > 0) {
+        // Transfer initial NFT amount and approve factory if pool is a sell pool
+        if (!_params.isBuy && _params.initialNFTBalance > 0) {
             nft.safeTransferFrom(
                 _params.sender,
                 address(this),
@@ -651,19 +711,25 @@ contract SudoFactoryWrapper is
             ? ILSSVMPair.PoolType.TOKEN
             : ILSSVMPair.PoolType.NFT;
 
-        ILSSVMPairFactory.CreateERC1155ERC20PairParams
-            memory params = ILSSVMPairFactory.CreateERC1155ERC20PairParams({
+        ILSSVMPairFactory.CreateERC1155ERC20PairParams memory params = ILSSVMPairFactory
+            .CreateERC1155ERC20PairParams({
                 token: token,
                 nft: nft,
                 bondingCurve: ICurve(_params.bondingCurve),
-                assetRecipient: payable(_params.sender),
+                assetRecipient: _params.isBuy // If a buy pool, set asset recipient to sudoVRFRouter for AllowListHook to work
+                    ? payable(sudoVRFRouter)
+                    : payable(_params.sender),
                 poolType: poolType,
                 delta: _params.delta,
                 fee: 0,
                 spotPrice: _params.spotPrice,
                 nftId: _params.initialNFTIDs[0],
-                initialNFTBalance: _params.initialNFTBalance,
-                initialTokenBalance: _params.initialTokenBalance,
+                initialNFTBalance: _params.isBuy
+                    ? 0
+                    : _params.initialNFTBalance,
+                initialTokenBalance: _params.isBuy
+                    ? _params.initialTokenBalance
+                    : 0,
                 hookAddress: address(allowListHook),
                 referralAddress: address(0)
             });
@@ -723,6 +789,10 @@ contract SudoFactoryWrapper is
         });
         pairsByCreator[_sender].push(address(_pair));
         isPair[address(_pair)] = true;
+        // Add to buyPairs if buy pool
+        if (_isBuy) {
+            buyPairs.push(address(_pair));
+        }
 
         // Revoke approvals after pair creation to enhance security
         if (_initialNFTIDs.length > 0) {

@@ -25,17 +25,11 @@ contract AllowListHook is IPairHooks, Owned {
     // State Variables
     // =========================================
 
-    /// @notice Mapping from NFT collection to NFT ID to allowed buyer.
-    mapping(address => mapping(uint256 => address)) public allowList;
+    /// @notice Mapping from NFT ID to allowed buyer.
+    mapping(uint256 => address) public allowList;
 
-    /// @notice Mapping from NFT collection to all NFT IDs.
-    mapping(address => uint256[]) public collectionIds;
-
-    /// @notice Mapping from NFT collection to whether it is supported by the allow list hook.
-    mapping(address => bool) public isSupportedCollection;
-
-    /// @notice All collections in the allow list.
-    address[] public collections;
+    /// @notice The length of the allow list.
+    uint256 public allowListLength;
 
     // =========================================
     // Errors
@@ -48,17 +42,13 @@ contract AllowListHook is IPairHooks, Owned {
     // Events
     // =========================================
 
-    event AllowListModified(
-        address collection,
-        uint256[] ids,
-        address[] allowedBuyers
+    event AllowListModified(uint256[] ids, address[] allowedBuyers);
+    event AllowListModifiedSingleBuyer(uint256[] ids, address allowedBuyer);
+    event AllowListUpdatedWithNewRouter(
+        address newRouter,
+        uint256 offset,
+        uint256 limit
     );
-    event AllowListModifiedSingleBuyer(
-        address collection,
-        uint256[] ids,
-        address allowedBuyer
-    );
-    event AllowListUpdatedWithNewRouter(address newRouter);
 
     // =========================================
     // Constructor
@@ -89,12 +79,10 @@ contract AllowListHook is IPairHooks, Owned {
     /**
      * @notice Modifies the allow list with specified NFT IDs and corresponding allowed buyers.
      * @dev Only the owner can call this function for manual fixes if needed.
-     * @param _collection The collection of NFTs.
      * @param _ids The array of NFT IDs.
      * @param _allowedBuyers The array of addresses allowed to receive the corresponding NFTs.
      */
     function modifyAllowList(
-        address _collection,
         uint256[] calldata _ids,
         address[] calldata _allowedBuyers
     ) external onlyOwner {
@@ -104,79 +92,70 @@ contract AllowListHook is IPairHooks, Owned {
         );
         for (uint i = 0; i < _ids.length; ) {
             require(_allowedBuyers[i] != address(0), "Invalid allowed buyer");
-            if (allowList[_collection][_ids[i]] == address(0)) {
-                collectionIds[_collection].push(_ids[i]); // Increment the allow list length if the id is not already in the allow list
-            }
-            allowList[_collection][_ids[i]] = _allowedBuyers[i];
+
+            allowList[_ids[i]] = _allowedBuyers[i];
 
             unchecked {
                 ++i;
             }
         }
-        if (!isSupportedCollection[_collection]) {
-            isSupportedCollection[_collection] = true;
-            collections.push(_collection);
-        }
 
-        emit AllowListModified(_collection, _ids, _allowedBuyers);
+        emit AllowListModified(_ids, _allowedBuyers);
     }
 
     /**
      * @notice Modifies the allow list for multiple NFT IDs with a single allowed buyer.
      * @dev Only the factory wrapper can call this function.
-     * @param _collection The collection of NFTs.
      * @param _ids The array of NFT IDs.
      * @param _allowedBuyer The address allowed to receive the specified NFTs.
      */
     function modifyAllowListSingleBuyer(
-        address _collection,
         uint256[] calldata _ids,
         address _allowedBuyer
     ) external onlyFactoryWrapper {
         require(_allowedBuyer != address(0), "Invalid allowed buyer");
         for (uint i = 0; i < _ids.length; ) {
-            if (allowList[_collection][_ids[i]] == address(0)) {
-                collectionIds[_collection].push(_ids[i]); // Increment the allow list length if the id is not already in the allow list
-            }
-            allowList[_collection][_ids[i]] = _allowedBuyer;
+            allowList[_ids[i]] = _allowedBuyer;
 
             unchecked {
                 ++i;
             }
         }
-        if (!isSupportedCollection[_collection]) {
-            isSupportedCollection[_collection] = true;
-            collections.push(_collection);
-        }
 
-        emit AllowListModifiedSingleBuyer(_collection, _ids, _allowedBuyer);
+        emit AllowListModifiedSingleBuyer(_ids, _allowedBuyer);
     }
 
     /**
      * @notice Updates the allow list with a new router address.
-     * @dev Only the owner can call this function when upgrading to a new router.
+     * @dev Only the factory wrapper can call this function when upgrading to a new router.
      * @param _newRouter The new router address to set for all NFT IDs in the allow list.
+     * @param _offset The offset of the allow list to update.
+     * @param _limit The limit of the allow list to update.
      */
     function updateAllowListWithNewRouter(
-        address _newRouter
-    ) external onlyOwner {
+        address _newRouter,
+        uint256 _offset,
+        uint256 _limit
+    ) external onlyFactoryWrapper {
         require(_newRouter != address(0), "Invalid new router");
-        for (uint256 i = 0; i < collections.length; ) {
-            uint256[] memory ids = collectionIds[collections[i]];
-            for (uint256 j = 0; j < ids.length; ) {
-                allowList[collections[i]][ids[j]] = _newRouter;
+        require(
+            _offset < allowListLength && _limit > 0,
+            "Invalid offset or limit"
+        );
 
-                unchecked {
-                    ++j;
-                }
-            }
+        uint256 end = _offset + _limit > allowListLength
+            ? allowListLength
+            : _offset + _limit;
+
+        for (uint256 i = _offset; i < end; ) {
+            allowList[i] = _newRouter;
 
             unchecked {
                 ++i;
             }
         }
 
-        emit AllowListUpdatedWithNewRouter(_newRouter);
+        emit AllowListUpdatedWithNewRouter(_newRouter, _offset, _limit);
     }
 
     /**
@@ -247,11 +226,10 @@ contract AllowListHook is IPairHooks, Owned {
         );
 
         if (isERC721) {
-            IERC721 nft = IERC721(nftAddress);
             for (uint256 i = 0; i < _nfts.length; ) {
                 uint256 id = _nfts[i];
-                address desiredOwner = allowList[nftAddress][id];
-                if (nft.ownerOf(id) != desiredOwner) {
+                address desiredOwner = allowList[id];
+                if (IERC721(nftAddress).ownerOf(id) != desiredOwner) {
                     revert AllowListHook__WrongOwner();
                 }
 
@@ -260,11 +238,13 @@ contract AllowListHook is IPairHooks, Owned {
                 }
             }
         } else if (isERC1155) {
-            IERC1155 nft = IERC1155(nftAddress);
             for (uint256 i = 0; i < _nfts.length; ) {
                 uint256 id = _nfts[i];
-                address desiredOwner = allowList[nftAddress][id];
-                uint256 balance = nft.balanceOf(desiredOwner, id);
+                address desiredOwner = allowList[id];
+                uint256 balance = IERC1155(nftAddress).balanceOf(
+                    desiredOwner,
+                    id
+                );
                 if (balance == 0) {
                     revert AllowListHook__WrongOwner();
                 }

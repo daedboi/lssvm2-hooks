@@ -43,6 +43,8 @@ interface ILSSVMPair {
         uint256[] calldata amounts
     ) external;
 
+    function changeAssetRecipient(address payable newRecipient) external;
+
     function token() external view returns (ERC20);
 
     function nftId() external view returns (uint256);
@@ -182,6 +184,12 @@ interface IAllowListHook {
         address collection,
         uint256[] calldata nftIds,
         address buyer
+    ) external;
+
+    function updateAllowListWithNewRouter(
+        address _newRouter,
+        uint256 _offset,
+        uint256 _limit
     ) external;
 }
 
