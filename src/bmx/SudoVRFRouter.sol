@@ -100,8 +100,7 @@ contract SudoVRFRouter is
         address indexed pair,
         address indexed buyer,
         uint256[] nftIds,
-        uint256 finalPrice,
-        bool isRandom
+        uint256 finalPrice
     );
     event NFTsSold(
         address indexed pair,
@@ -115,7 +114,6 @@ contract SudoVRFRouter is
         address indexed pair
     );
     event FeeConfigUpdated(uint256 fee, address feeRecipient);
-    event RandomPairSet(address indexed pair);
     event RequestFulfilled(address indexed user, uint256 requestId);
     event VRFConsumerUpdated(address newVRFConsumer);
     event RequestCancelled(address indexed user, uint256 requestId);
@@ -246,9 +244,6 @@ contract SudoVRFRouter is
             (request.inputAmount - finalPrice);
         uint256 amountUsed;
 
-        // Transfer fee to fee recipient
-        _transferFee(wrapperFee, pair);
-
         // Perform the swap through the pair
         request.claimed = true;
         try
@@ -270,19 +265,16 @@ contract SudoVRFRouter is
             return new uint256[](0);
         }
 
+        // Transfer fee to fee recipient
+        _transferFee(wrapperFee, pair);
+
         if (amountUsed < swapAmount) {
             _refundUser(msg.sender, swapAmount - amountUsed, pair);
         }
 
         request.claimedTokenIds = randomNFTIds;
 
-        emit NFTsBought(
-            request.pair,
-            msg.sender,
-            randomNFTIds,
-            finalPrice,
-            true
-        );
+        emit NFTsBought(request.pair, msg.sender, randomNFTIds, finalPrice);
 
         return randomNFTIds;
     }
@@ -347,6 +339,10 @@ contract SudoVRFRouter is
             _nftAmount > 0 && _maxExpectedTokenInput > 0,
             "Invalid amounts"
         );
+        require(
+            block.timestamp < factoryWrapper.getUnlockTime(_pair),
+            "Can only buy before pair is unlocked"
+        );
 
         // Ensure the user doesn't have an unclaimed request
         uint256[] memory userRequests = userToRequestIds[msg.sender];
@@ -397,78 +393,6 @@ contract SudoVRFRouter is
     }
 
     /**
-     * @notice Buys specific NFTs from a non-random sell pool.
-     * @param _pair The address of the LSSVMPair pool to buy NFTs from, must not be a random pair.
-     * @param _nftIds The list of NFT IDs to purchase for ERC721 or the amount for ERC1155.
-     * @param _maxExpectedTokenInput The maximum amount of tokens or ETH the user is willing to spend (inclusive of all fees + slippage).
-     * @return amountSpent The total amount spent during the purchase, including fees.
-     */
-    function buyNFTs(
-        address _pair,
-        uint256[] calldata _nftIds,
-        uint256 _maxExpectedTokenInput
-    ) external payable nonReentrant returns (uint256 amountSpent) {
-        require(_pair != address(0), "Invalid pair");
-        require(
-            _nftIds.length > 0 && _maxExpectedTokenInput > 0,
-            "Invalid input"
-        );
-        require(
-            factoryWrapper.isPair(_pair) && !factoryWrapper.isRandomPair(_pair),
-            "Must be a valid non-random pair"
-        );
-
-        ILSSVMPair pair = ILSSVMPair(_pair);
-        require(
-            pair.poolType() == ILSSVMPair.PoolType.NFT,
-            "Pair is not a sell pool"
-        );
-
-        bool isETHPair = _isETHPair(pair);
-        uint256 inputAmount = isETHPair ? msg.value : _maxExpectedTokenInput;
-
-        if (!isETHPair) {
-            // For ERC20 pairs, transfer tokens from the buyer to this contract and approve the pair
-            ERC20 token = pair.token();
-            token.safeTransferFrom(msg.sender, address(this), inputAmount);
-            token.safeApprove(_pair, inputAmount);
-        }
-
-        (uint256 finalPrice, uint256 wrapperFee, ) = calculateBuyOrSell(
-            _pair,
-            _nftIds.length,
-            0, // Asset ID is 0 for ERC721
-            true // It's a buy operation
-        );
-
-        require(inputAmount >= finalPrice, "Insufficient funds to buy NFTs");
-
-        // request.inputAmount is finalPrice + slippage so we deduct the finalPrice from it
-        uint256 swapAmount = (finalPrice - wrapperFee) +
-            (inputAmount - finalPrice);
-
-        // Transfer wrapper fee to fee recipient
-        _transferFee(wrapperFee, pair);
-
-        // Perform the swap through the pair
-        uint256 amountUsed = pair.swapTokenForSpecificNFTs{
-            value: isETHPair ? finalPrice - wrapperFee : 0
-        }(_nftIds, swapAmount, address(this), false, address(this));
-
-        _transferNFTs(address(this), msg.sender, pair, _nftIds, false);
-
-        // Refund any excess funds
-        if (amountUsed < swapAmount) {
-            uint256 refundAmount = swapAmount - amountUsed;
-            _refundUser(msg.sender, refundAmount, pair);
-        }
-
-        emit NFTsBought(_pair, msg.sender, _nftIds, finalPrice, false);
-
-        return finalPrice;
-    }
-
-    /**
      * @notice Sells NFTs to a pair.
      * @param _pair The address of the pair to sell to.
      * @param _nftIds The IDs of the NFTs to sell for ERC721 or the amount for ERC1155.
@@ -489,11 +413,15 @@ contract SudoVRFRouter is
             _nftIds.length > 0 && _minExpectedTokenOutput > 0,
             "Invalid input"
         );
+        require(
+            block.timestamp < factoryWrapper.getUnlockTime(_pair),
+            "Can only sell before pair is unlocked"
+        );
 
         ILSSVMPair pair = ILSSVMPair(_pair);
         require(
             pair.poolType() == ILSSVMPair.PoolType.TOKEN,
-            "Pair is not a sell pool"
+            "Pair is not a buy pool"
         );
 
         // Transfer NFTs from the seller to this contract and approve the pair

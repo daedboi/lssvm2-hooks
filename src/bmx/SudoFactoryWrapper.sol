@@ -36,6 +36,9 @@ contract SudoFactoryWrapper is
     /// @notice Minimum lock duration for a pair (12 hours)
     uint256 public constant MIN_LOCK_DURATION = 12 hours;
 
+    /// @notice Maximum lock duration for a pair (30 days)
+    uint256 public constant MAX_LOCK_DURATION = 30 days;
+
     /// @notice Factory instance to create pairs
     ILSSVMPairFactory public immutable factory;
 
@@ -51,7 +54,10 @@ contract SudoFactoryWrapper is
     address public sudoVRFRouter;
 
     /// @notice Minimum duration that a pair must remain locked
-    uint256 public minimumLockDuration;
+    uint256 public minLockDuration;
+
+    /// @notice Maximum duration that a pair can be locked
+    uint256 public maxLockDuration;
 
     /// @notice Array of all buy pairs created by this factory wrapper.
     /// @dev Used to update all asset recipients for buy pairs when sudoVRFRouter is updated.
@@ -63,10 +69,10 @@ contract SudoFactoryWrapper is
     /// @notice Mapping to store pair addresses created by a user
     mapping(address => address[]) public pairsByCreator;
 
-    /// @notice Mapping to store if an address is a pair
+    /// @notice Mapping to store if an address is a pair created by this factory wrapper
     mapping(address => bool) public isPair;
 
-    /// @notice Mapping to store if a pair is a random pair (VRF ERC721 buy pool)
+    /// @notice Mapping to store if a pair is a random pair (VRF ERC721 sell pool)
     mapping(address => bool) public isRandomPair;
 
     // =========================================
@@ -75,7 +81,6 @@ contract SudoFactoryWrapper is
 
     /// @notice Struct to store pair information
     struct PairInfo {
-        address pairAddress; // Pair address
         uint256 pairUnlockTime; // Timestamp when the pair will be unlocked
         address pairCreator; // Address of the pair creator
         bool hasWithdrawn; // Whether the pair has been withdrawn from
@@ -85,7 +90,6 @@ contract SudoFactoryWrapper is
     struct CreatePairParams {
         address sender;
         bool isBuy;
-        bool isRandom;
         bool isETH;
         address nft;
         address token;
@@ -108,8 +112,7 @@ contract SudoFactoryWrapper is
         uint256 unlockTime,
         bool isERC721,
         bool isETH,
-        bool isBuy,
-        bool isRandom
+        bool isBuy
     );
     event PairWithdrawal(
         address indexed pair,
@@ -126,7 +129,10 @@ contract SudoFactoryWrapper is
         uint256 allowListOffset,
         uint256 allowListLimit
     );
-    event MinimumLockDurationUpdated(uint256 newMinimumLockDuration);
+    event LockDurationsUpdated(
+        uint256 newMinimumLockDuration,
+        uint256 newMaximumLockDuration
+    );
 
     // =========================================
     // Constructor
@@ -135,16 +141,27 @@ contract SudoFactoryWrapper is
     /**
      * @notice Initializes the contract with factory and allow list hook.
      * @param _factory Address of the LSSVMPairFactory.
-     * @param _minimumLockDuration Minimum lock duration for a pair.
+     * @param _minLockDuration Minimum lock duration for a pair.
+     * @param _maxLockDuration Maximum lock duration for a pair.
      */
-    constructor(address _factory, uint256 _minimumLockDuration) {
+    constructor(
+        address _factory,
+        uint256 _minLockDuration,
+        uint256 _maxLockDuration
+    ) {
         require(_factory != address(0), "Invalid factory address");
         require(
-            _minimumLockDuration >= MIN_LOCK_DURATION,
-            "Invalid lock duration"
+            _minLockDuration >= MIN_LOCK_DURATION &&
+                _minLockDuration < _maxLockDuration,
+            "Invalid minimum lock duration"
+        );
+        require(
+            _maxLockDuration <= MAX_LOCK_DURATION,
+            "Maximum lock duration too long"
         );
         factory = ILSSVMPairFactory(payable(_factory));
-        minimumLockDuration = _minimumLockDuration;
+        minLockDuration = _minLockDuration;
+        maxLockDuration = _maxLockDuration;
     }
 
     /**
@@ -159,8 +176,7 @@ contract SudoFactoryWrapper is
     /**
      * @notice Creates a new pair with specified parameters.
      * @dev Depending on the NFT type (ERC721 or ERC1155) and whether the pair is ETH or ERC20-based, it calls the appropriate internal function.
-     * @param _isBuy Determines if the pair is a buy or sell pair.
-     * @param _isRandom Determines if the pair is a random pair using Chainlink VRF (only for ERC721 buy pools).
+     * @param _isBuy Determines if the ERC721 pair is a buy or sell pair. ERC1155 pairs are always buy pairs, not used.
      * @param _nft Address of the NFT contract.
      * @param _token Address of the ERC20 token (use address(0) for ETH).
      * @param _bondingCurve Address of the bonding curve contract.
@@ -174,7 +190,6 @@ contract SudoFactoryWrapper is
      */
     function createPair(
         bool _isBuy,
-        bool _isRandom,
         address _nft,
         address _token,
         address _bondingCurve,
@@ -190,8 +205,9 @@ contract SudoFactoryWrapper is
             "Invalid NFT or bonding curve address"
         );
         require(
-            _lockDuration >= minimumLockDuration,
-            "Lock duration must be at least 24 hours"
+            _lockDuration >= minLockDuration &&
+                _lockDuration <= maxLockDuration,
+            "Invalid lock duration"
         );
         require(
             _supportsInterface(_nft, type(IERC721).interfaceId) ||
@@ -207,7 +223,6 @@ contract SudoFactoryWrapper is
                     CreatePairParams(
                         msg.sender,
                         _isBuy,
-                        _isRandom,
                         _token == address(0), // isETH
                         _nft,
                         _token,
@@ -227,7 +242,6 @@ contract SudoFactoryWrapper is
                     CreatePairParams(
                         msg.sender,
                         _isBuy,
-                        _isRandom,
                         _token == address(0), // isETH
                         _nft,
                         _token,
@@ -249,8 +263,7 @@ contract SudoFactoryWrapper is
                 pairAddress = _createERC1155ETHPair(
                     CreatePairParams(
                         msg.sender,
-                        _isBuy,
-                        _isRandom,
+                        true,
                         _token == address(0), // isETH
                         _nft,
                         _token,
@@ -269,8 +282,7 @@ contract SudoFactoryWrapper is
                 pairAddress = _createERC1155ERC20Pair(
                     CreatePairParams(
                         msg.sender,
-                        _isBuy,
-                        _isRandom,
+                        true,
                         _token == address(0), // isETH
                         _nft,
                         _token,
@@ -462,19 +474,27 @@ contract SudoFactoryWrapper is
     }
 
     /**
-     * @notice Updates the minimum lock duration.
-     * @param _newMinimumLockDuration The new minimum lock duration.
+     * @notice Updates the minimum and maximum lock duration.
+     * @param _newMinLockDuration The new minimum lock duration.
+     * @param _newMaxLockDuration The new maximum lock duration.
      */
-    function setMinimumLockDuration(
-        uint256 _newMinimumLockDuration
+    function setLockDurations(
+        uint256 _newMinLockDuration,
+        uint256 _newMaxLockDuration
     ) external onlyOwner {
         require(
-            _newMinimumLockDuration >= MIN_LOCK_DURATION,
-            "Lock duration too short"
+            _newMinLockDuration >= MIN_LOCK_DURATION &&
+                _newMinLockDuration < _newMaxLockDuration,
+            "Invalid minimum lock duration"
+        );
+        require(
+            _newMaxLockDuration <= MAX_LOCK_DURATION,
+            "Invalid maximum lock duration"
         );
 
-        minimumLockDuration = _newMinimumLockDuration;
-        emit MinimumLockDurationUpdated(_newMinimumLockDuration);
+        minLockDuration = _newMinLockDuration;
+        maxLockDuration = _newMaxLockDuration;
+        emit LockDurationsUpdated(_newMinLockDuration, _newMaxLockDuration);
     }
 
     // =========================================
@@ -520,8 +540,8 @@ contract SudoFactoryWrapper is
             address(0)
         );
 
-        // Set random pair if sell pool and isRandom
-        isRandomPair[address(pair)] = !_params.isBuy && _params.isRandom;
+        // Set random pair if sell pool
+        isRandomPair[address(pair)] = !_params.isBuy;
 
         // Update pair info and emit event
         _finalizePairCreation(
@@ -531,8 +551,7 @@ contract SudoFactoryWrapper is
             _params.lockDuration,
             true,
             true,
-            _params.isBuy,
-            _params.isRandom
+            _params.isBuy
         );
 
         return address(pair);
@@ -599,8 +618,8 @@ contract SudoFactoryWrapper is
             });
         ILSSVMPair pair = factory.createPairERC721ERC20(params);
 
-        // Set random pair if sell pool and isRandom
-        isRandomPair[address(pair)] = !_params.isBuy && _params.isRandom;
+        // Set random pair if sell pool
+        isRandomPair[address(pair)] = !_params.isBuy;
 
         // Update pair info and emit event
         _finalizePairCreation(
@@ -610,8 +629,7 @@ contract SudoFactoryWrapper is
             _params.lockDuration,
             true,
             false,
-            _params.isBuy,
-            _params.isRandom
+            _params.isBuy
         );
 
         return address(pair);
@@ -619,41 +637,23 @@ contract SudoFactoryWrapper is
 
     /**
      * @notice Creates an ERC1155-ETH pair.
+     * @dev Only buy pools are supported for ERC1155 pairs.
      * @param _params The CreatePairParams for creating the pair.
      * @return pairAddress Address of the created pair.
      */
     function _createERC1155ETHPair(
         CreatePairParams memory _params
     ) internal returns (address pairAddress) {
-        IERC1155 nft = IERC1155(_params.nft);
-
-        // Transfer initial NFT amount and approve factory if pool is a sell pool
-        if (!_params.isBuy && _params.initialNFTBalance > 0) {
-            nft.safeTransferFrom(
-                _params.sender,
-                address(this),
-                _params.initialNFTIDs[0],
-                _params.initialNFTBalance,
-                bytes("")
-            );
-            nft.setApprovalForAll(address(factory), true);
-        }
-
-        // Determine pool type
-        ILSSVMPair.PoolType poolType = _params.isBuy
-            ? ILSSVMPair.PoolType.TOKEN
-            : ILSSVMPair.PoolType.NFT;
-
         ILSSVMPair pair = factory.createPairERC1155ETH{value: msg.value}(
-            nft,
+            IERC1155(_params.nft),
             ICurve(_params.bondingCurve),
-            _params.isBuy ? payable(sudoVRFRouter) : payable(_params.sender), // If a buy pool, set asset recipient to sudoVRFRouter for AllowListHook to work
-            poolType,
+            payable(sudoVRFRouter), // Buy pool, set asset recipient to sudoVRFRouter for AllowListHook to work
+            ILSSVMPair.PoolType.TOKEN,
             _params.delta,
             0,
             _params.spotPrice,
             _params.initialNFTIDs[0],
-            _params.isBuy ? 0 : _params.initialNFTBalance,
+            0,
             address(allowListHook),
             address(0)
         );
@@ -666,8 +666,7 @@ contract SudoFactoryWrapper is
             _params.lockDuration,
             false,
             true,
-            _params.isBuy,
-            false
+            true
         );
 
         return address(pair);
@@ -675,27 +674,14 @@ contract SudoFactoryWrapper is
 
     /**
      * @notice Creates an ERC1155-ERC20 pair.
+     * @dev Only buy pools are supported for ERC1155 pairs.
      * @param _params The CreatePairParams for creating the pair.
      * @return pairAddress Address of the created pair.
      */
     function _createERC1155ERC20Pair(
         CreatePairParams memory _params
     ) internal returns (address pairAddress) {
-        IERC1155 nft = IERC1155(_params.nft);
         ERC20 token = ERC20(_params.token);
-
-        // Transfer initial NFT amount and approve factory if pool is a sell pool
-        if (!_params.isBuy && _params.initialNFTBalance > 0) {
-            nft.safeTransferFrom(
-                _params.sender,
-                address(this),
-                _params.initialNFTIDs[0],
-                _params.initialNFTBalance,
-                bytes("")
-            );
-            nft.setApprovalForAll(address(factory), true);
-        }
-
         // Transfer initial ERC20 tokens and approve factory
         if (_params.initialTokenBalance > 0) {
             token.safeTransferFrom(
@@ -706,30 +692,19 @@ contract SudoFactoryWrapper is
             token.safeApprove(address(factory), _params.initialTokenBalance);
         }
 
-        // Determine pool type
-        ILSSVMPair.PoolType poolType = _params.isBuy
-            ? ILSSVMPair.PoolType.TOKEN
-            : ILSSVMPair.PoolType.NFT;
-
         ILSSVMPairFactory.CreateERC1155ERC20PairParams memory params = ILSSVMPairFactory
             .CreateERC1155ERC20PairParams({
                 token: token,
-                nft: nft,
+                nft: IERC1155(_params.nft),
                 bondingCurve: ICurve(_params.bondingCurve),
-                assetRecipient: _params.isBuy // If a buy pool, set asset recipient to sudoVRFRouter for AllowListHook to work
-                    ? payable(sudoVRFRouter)
-                    : payable(_params.sender),
-                poolType: poolType,
+                assetRecipient: payable(sudoVRFRouter), // Buy pool, set asset recipient to sudoVRFRouter for AllowListHook to work
+                poolType: ILSSVMPair.PoolType.TOKEN,
                 delta: _params.delta,
                 fee: 0,
                 spotPrice: _params.spotPrice,
                 nftId: _params.initialNFTIDs[0],
-                initialNFTBalance: _params.isBuy
-                    ? 0
-                    : _params.initialNFTBalance,
-                initialTokenBalance: _params.isBuy
-                    ? _params.initialTokenBalance
-                    : 0,
+                initialNFTBalance: 0,
+                initialTokenBalance: _params.initialTokenBalance,
                 hookAddress: address(allowListHook),
                 referralAddress: address(0)
             });
@@ -743,8 +718,7 @@ contract SudoFactoryWrapper is
             _params.lockDuration,
             false,
             false,
-            _params.isBuy,
-            false
+            true
         );
 
         return address(pair);
@@ -759,7 +733,6 @@ contract SudoFactoryWrapper is
      * @param _isERC721 Boolean indicating if the pair is for ERC721 NFTs.
      * @param _isETH Boolean indicating if the pair is an ETH pair.
      * @param _isBuy Boolean indicating if the pair is a buy pool.
-     * @param _isRandom Boolean indicating if the pair is a random pair (only for ERC721 buy pools).
      */
     function _finalizePairCreation(
         address _sender,
@@ -768,8 +741,7 @@ contract SudoFactoryWrapper is
         uint256 _lockDuration,
         bool _isERC721,
         bool _isETH,
-        bool _isBuy,
-        bool _isRandom
+        bool _isBuy
     ) internal {
         address nft = _pair.nft();
         // Set up the allow list for the newly created pair
@@ -778,7 +750,6 @@ contract SudoFactoryWrapper is
         // Set the address, unlock time, creator, and withdrawal status for the pair
         uint256 unlockTime = block.timestamp + _lockDuration;
         pairInfo[address(_pair)] = PairInfo({
-            pairAddress: address(_pair),
             pairUnlockTime: unlockTime,
             pairCreator: _sender,
             hasWithdrawn: false
@@ -805,8 +776,7 @@ contract SudoFactoryWrapper is
             unlockTime,
             _isERC721,
             _isETH,
-            _isBuy,
-            _isRandom
+            _isBuy
         );
     }
 

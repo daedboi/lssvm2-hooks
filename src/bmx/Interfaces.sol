@@ -209,4 +209,6 @@ interface ISudoFactoryWrapper {
     function isPair(address pair) external view returns (bool);
 
     function isRandomPair(address pair) external view returns (bool);
+
+    function getUnlockTime(address pair) external view returns (uint256);
 }
