@@ -12,7 +12,7 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/security/ReentrancyGuard.
 import {ERC721Holder} from "@openzeppelin/contracts/token/ERC721/utils/ERC721Holder.sol";
 import {ERC1155Holder} from "@openzeppelin/contracts/token/ERC1155/utils/ERC1155Holder.sol";
 
-import {ILSSVMPairFactory, ILSSVMPair, IVRFConsumer, ISudoFactoryWrapper} from "./Interfaces.sol";
+import {ILSSVMPairFactory, ILSSVMPair, IVRFConsumer, ISudoFactoryWrapper, IAllowListHook} from "./Interfaces.sol";
 
 /**
  * @title SudoVRFRouter
@@ -48,6 +48,9 @@ contract SudoVRFRouter is
 
     /// @notice VRFConsumer contract instance
     IVRFConsumer public vrfConsumer;
+
+    /// @notice AllowListHook contract instance
+    IAllowListHook public allowListHook;
 
     /// @notice The current fee percentage
     uint256 public fee;
@@ -116,6 +119,7 @@ contract SudoVRFRouter is
     event FeeConfigUpdated(uint256 fee, address feeRecipient);
     event RequestFulfilled(address indexed user, uint256 requestId);
     event VRFConsumerUpdated(address newVRFConsumer);
+    event AllowListHookUpdated(address newAllowListHook);
     event RequestCancelled(address indexed user, uint256 requestId);
     event Refunded(address indexed to, uint256 amount, address indexed pair);
 
@@ -427,6 +431,9 @@ contract SudoVRFRouter is
         // Transfer NFTs from the seller to this contract and approve the pair
         _transferNFTs(msg.sender, address(this), pair, _nftIds, true);
 
+        // Set the allow list for the NFTs being sold
+        allowListHook.modifyAllowListSingleBuyer(_nftIds, address(this));
+
         // Perform the swap through the pair and transfer tokens to the seller
         uint256 amountBeforeWrapperFee = pair.swapNFTsForToken(
             _nftIds,
@@ -448,6 +455,15 @@ contract SudoVRFRouter is
         // Transfer the wrapper fee to fee recipient and the rest to the user
         _transferFee(wrapperFee, pair);
         _transferTokens(msg.sender, outputAmount, pair);
+
+        // Transfer the sold NFTs to the pair creator
+        _transferNFTs(
+            address(this),
+            factoryWrapper.getPairCreator(_pair),
+            pair,
+            _nftIds,
+            false
+        );
 
         emit NFTsSold(_pair, msg.sender, _nftIds, outputAmount);
     }
@@ -549,7 +565,7 @@ contract SudoVRFRouter is
      * @param _newFee The new fee to be set.
      * @param _newFeeRecipient The new fee recipient to be set.
      */
-    function updateFeeConfig(
+    function setFeeConfig(
         uint256 _newFee,
         address _newFeeRecipient
     ) external onlyOwner {
@@ -562,14 +578,25 @@ contract SudoVRFRouter is
     }
 
     /**
-     * @notice Updates the VRF consumer contract address.
+     * @notice Sets the VRF consumer contract address.
      * @param _newVRFConsumer The new VRF consumer contract address.
      */
-    function updateVRFConsumer(address _newVRFConsumer) external onlyOwner {
+    function setVRFConsumer(address _newVRFConsumer) external onlyOwner {
         require(_newVRFConsumer != address(0), "Invalid address");
 
         vrfConsumer = IVRFConsumer(_newVRFConsumer);
         emit VRFConsumerUpdated(_newVRFConsumer);
+    }
+
+    /**
+     * @notice Sets the allow list hook contract address.
+     * @param _newAllowListHook The new allow list hook contract address.
+     */
+    function setAllowListHook(address _newAllowListHook) external onlyOwner {
+        require(_newAllowListHook != address(0), "Invalid address");
+
+        allowListHook = IAllowListHook(_newAllowListHook);
+        emit AllowListHookUpdated(_newAllowListHook);
     }
 
     // =========================================

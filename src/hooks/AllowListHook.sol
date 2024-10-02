@@ -25,6 +25,9 @@ contract AllowListHook is IPairHooks, Owned {
     // State Variables
     // =========================================
 
+    /// @notice The address of the SudoVRFRouter contract.
+    address public sudoVRFRouter;
+
     /// @notice Mapping from NFT ID to allowed buyer.
     mapping(uint256 => address) public allowList;
 
@@ -54,10 +57,15 @@ contract AllowListHook is IPairHooks, Owned {
     // Constructor
     // =========================================
 
-    constructor(address _factoryWrapper) Owned(msg.sender) {
+    constructor(
+        address _factoryWrapper,
+        address _sudoVRFRouter
+    ) Owned(msg.sender) {
         require(_factoryWrapper != address(0), "Invalid factory wrapper");
+        require(_sudoVRFRouter != address(0), "Invalid sudoVRFRouter");
 
         factoryWrapper = _factoryWrapper;
+        sudoVRFRouter = _sudoVRFRouter;
     }
 
     // =========================================
@@ -68,6 +76,14 @@ contract AllowListHook is IPairHooks, Owned {
         require(
             msg.sender == factoryWrapper,
             "Only the factory wrapper can call this function"
+        );
+        _;
+    }
+
+    modifier onlyFactoryOrRouter() {
+        require(
+            msg.sender == factoryWrapper || msg.sender == sudoVRFRouter,
+            "Only the factory wrapper or sudoVRFRouter can call this function"
         );
         _;
     }
@@ -93,6 +109,10 @@ contract AllowListHook is IPairHooks, Owned {
         for (uint i = 0; i < _ids.length; ) {
             require(_allowedBuyers[i] != address(0), "Invalid allowed buyer");
 
+            if (allowList[_ids[i]] == address(0)) {
+                allowListLength++;
+            }
+
             allowList[_ids[i]] = _allowedBuyers[i];
 
             unchecked {
@@ -112,9 +132,13 @@ contract AllowListHook is IPairHooks, Owned {
     function modifyAllowListSingleBuyer(
         uint256[] calldata _ids,
         address _allowedBuyer
-    ) external onlyFactoryWrapper {
+    ) external onlyFactoryOrRouter {
         require(_allowedBuyer != address(0), "Invalid allowed buyer");
         for (uint i = 0; i < _ids.length; ) {
+            if (allowList[_ids[i]] == address(0)) {
+                allowListLength++;
+            }
+
             allowList[_ids[i]] = _allowedBuyer;
 
             unchecked {
@@ -147,13 +171,21 @@ contract AllowListHook is IPairHooks, Owned {
             ? allowListLength
             : _offset + _limit;
 
-        for (uint256 i = _offset; i < end; ) {
-            allowList[i] = _newRouter;
+        uint256 count = 0;
+        for (uint256 i = 0; count < end; ) {
+            if (allowList[i] != address(0)) {
+                if (count >= _offset) {
+                    allowList[i] = _newRouter;
+                }
+                count++;
+            }
 
             unchecked {
                 ++i;
             }
         }
+
+        sudoVRFRouter = _newRouter;
 
         emit AllowListUpdatedWithNewRouter(_newRouter, _offset, _limit);
     }

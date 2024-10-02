@@ -744,8 +744,13 @@ contract SudoFactoryWrapper is
         bool _isBuy
     ) internal {
         address nft = _pair.nft();
-        // Set up the allow list for the newly created pair
-        allowListHook.modifyAllowListSingleBuyer(_initialNFTIDs, sudoVRFRouter);
+        // Set up the allow list for the newly created sell pool (for buy pools we set it in the router)
+        if (!_isBuy) {
+            allowListHook.modifyAllowListSingleBuyer(
+                _initialNFTIDs,
+                sudoVRFRouter
+            );
+        }
 
         // Set the address, unlock time, creator, and withdrawal status for the pair
         uint256 unlockTime = block.timestamp + _lockDuration;
