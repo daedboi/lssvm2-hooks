@@ -146,6 +146,7 @@ contract VRFConsumer is VRFConsumerBaseV2Plus {
         address payable _sudoVRFRouter
     ) external onlyOwner {
         sudoVRFRouter = ISudoVRFRouter(_sudoVRFRouter);
+
         emit SudoVRFRouterSet(_sudoVRFRouter);
     }
 

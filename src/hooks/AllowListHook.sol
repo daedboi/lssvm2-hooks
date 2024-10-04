@@ -12,6 +12,7 @@ import {Owned} from "solmate/auth/Owned.sol";
 /**
  * @title AllowListHook
  * @notice This contract is used to manage allow lists for NFTs.
+ * @dev Modified to allow for a single router address to be set for all NFTs in the allow list.
  */
 contract AllowListHook is IPairHooks, Owned {
     // =========================================
@@ -28,12 +29,6 @@ contract AllowListHook is IPairHooks, Owned {
     /// @notice The address of the SudoVRFRouter contract.
     address public sudoVRFRouter;
 
-    /// @notice Mapping from NFT ID to allowed buyer.
-    mapping(uint256 => address) public allowList;
-
-    /// @notice The length of the allow list.
-    uint256 public allowListLength;
-
     // =========================================
     // Errors
     // =========================================
@@ -45,13 +40,7 @@ contract AllowListHook is IPairHooks, Owned {
     // Events
     // =========================================
 
-    event AllowListModified(uint256[] ids, address[] allowedBuyers);
-    event AllowListModifiedSingleBuyer(uint256[] ids, address allowedBuyer);
-    event AllowListUpdatedWithNewRouter(
-        address newRouter,
-        uint256 offset,
-        uint256 limit
-    );
+    event AllowListUpdatedWithNewRouter(address newRouter);
 
     // =========================================
     // Constructor
@@ -80,114 +69,21 @@ contract AllowListHook is IPairHooks, Owned {
         _;
     }
 
-    modifier onlyFactoryOrRouter() {
-        require(
-            msg.sender == factoryWrapper || msg.sender == sudoVRFRouter,
-            "Only the factory wrapper or sudoVRFRouter can call this function"
-        );
-        _;
-    }
-
     // =========================================
     // External Functions
     // =========================================
 
     /**
-     * @notice Modifies the allow list with specified NFT IDs and corresponding allowed buyers.
-     * @dev Only the owner can call this function for manual fixes if needed.
-     * @param _ids The array of NFT IDs.
-     * @param _allowedBuyers The array of addresses allowed to receive the corresponding NFTs.
-     */
-    function modifyAllowList(
-        uint256[] calldata _ids,
-        address[] calldata _allowedBuyers
-    ) external onlyOwner {
-        require(
-            _ids.length == _allowedBuyers.length,
-            "Arrays must be of equal length"
-        );
-        for (uint i = 0; i < _ids.length; ) {
-            require(_allowedBuyers[i] != address(0), "Invalid allowed buyer");
-
-            if (allowList[_ids[i]] == address(0)) {
-                allowListLength++;
-            }
-
-            allowList[_ids[i]] = _allowedBuyers[i];
-
-            unchecked {
-                ++i;
-            }
-        }
-
-        emit AllowListModified(_ids, _allowedBuyers);
-    }
-
-    /**
-     * @notice Modifies the allow list for multiple NFT IDs with a single allowed buyer.
-     * @dev Only the factory wrapper can call this function.
-     * @param _ids The array of NFT IDs.
-     * @param _allowedBuyer The address allowed to receive the specified NFTs.
-     */
-    function modifyAllowListSingleBuyer(
-        uint256[] calldata _ids,
-        address _allowedBuyer
-    ) external onlyFactoryOrRouter {
-        require(_allowedBuyer != address(0), "Invalid allowed buyer");
-        for (uint i = 0; i < _ids.length; ) {
-            if (allowList[_ids[i]] == address(0)) {
-                allowListLength++;
-            }
-
-            allowList[_ids[i]] = _allowedBuyer;
-
-            unchecked {
-                ++i;
-            }
-        }
-
-        emit AllowListModifiedSingleBuyer(_ids, _allowedBuyer);
-    }
-
-    /**
      * @notice Updates the allow list with a new router address.
      * @dev Only the factory wrapper can call this function when upgrading to a new router.
      * @param _newRouter The new router address to set for all NFT IDs in the allow list.
-     * @param _offset The offset of the allow list to update.
-     * @param _limit The limit of the allow list to update.
      */
     function updateAllowListWithNewRouter(
-        address _newRouter,
-        uint256 _offset,
-        uint256 _limit
+        address _newRouter
     ) external onlyFactoryWrapper {
-        require(_newRouter != address(0), "Invalid new router");
-        require(
-            _offset < allowListLength && _limit > 0,
-            "Invalid offset or limit"
-        );
-
-        uint256 end = _offset + _limit > allowListLength
-            ? allowListLength
-            : _offset + _limit;
-
-        uint256 count = 0;
-        for (uint256 i = 0; count < end; ) {
-            if (allowList[i] != address(0)) {
-                if (count >= _offset) {
-                    allowList[i] = _newRouter;
-                }
-                count++;
-            }
-
-            unchecked {
-                ++i;
-            }
-        }
-
         sudoVRFRouter = _newRouter;
 
-        emit AllowListUpdatedWithNewRouter(_newRouter, _offset, _limit);
+        emit AllowListUpdatedWithNewRouter(_newRouter);
     }
 
     /**
@@ -260,8 +156,7 @@ contract AllowListHook is IPairHooks, Owned {
         if (isERC721) {
             for (uint256 i = 0; i < _nfts.length; ) {
                 uint256 id = _nfts[i];
-                address desiredOwner = allowList[id];
-                if (IERC721(nftAddress).ownerOf(id) != desiredOwner) {
+                if (IERC721(nftAddress).ownerOf(id) != sudoVRFRouter) {
                     revert AllowListHook__WrongOwner();
                 }
 
@@ -272,9 +167,8 @@ contract AllowListHook is IPairHooks, Owned {
         } else if (isERC1155) {
             for (uint256 i = 0; i < _nfts.length; ) {
                 uint256 id = _nfts[i];
-                address desiredOwner = allowList[id];
                 uint256 balance = IERC1155(nftAddress).balanceOf(
-                    desiredOwner,
+                    sudoVRFRouter,
                     id
                 );
                 if (balance == 0) {

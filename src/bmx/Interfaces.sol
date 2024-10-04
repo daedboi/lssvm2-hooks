@@ -31,25 +31,18 @@ interface ILSSVMPair {
         pure
         returns (ILSSVMPairFactory.PairVariant);
 
-    function withdrawERC721(IERC721 nft, uint256[] calldata nftIds) external;
-
-    function withdrawETH(uint256 amount) external;
-
-    function withdrawERC20(ERC20 token, uint256 amount) external;
-
-    function withdrawERC1155(
-        IERC1155 nft,
-        uint256[] calldata ids,
-        uint256[] calldata amounts
-    ) external;
-
-    function changeAssetRecipient(address payable newRecipient) external;
-
     function token() external view returns (ERC20);
 
     function nftId() external view returns (uint256);
 
     function getAllIds() external view returns (uint256[] memory);
+
+    function changeAssetRecipient(address payable newRecipient) external;
+
+    function transferOwnership(
+        address newOwner,
+        bytes calldata data
+    ) external payable;
 
     function swapTokenForSpecificNFTs(
         uint256[] calldata nftIds,
@@ -138,37 +131,9 @@ interface ILSSVMPairFactory {
         address referralAddress;
     }
 
-    function createPairERC721ETH(
-        IERC721 nft,
-        ICurve bondingCurve,
-        address payable assetRecipient,
-        ILSSVMPair.PoolType poolType,
-        uint128 delta,
-        uint96 fee,
-        uint128 spotPrice,
-        address propertyChecker,
-        uint256[] calldata initialNFTIDs,
-        address hookAddress,
-        address referralAddress
-    ) external payable returns (ILSSVMPair pair);
-
     function createPairERC721ERC20(
         ILSSVMPairFactory.CreateERC721ERC20PairParams calldata params
     ) external returns (ILSSVMPair pair);
-
-    function createPairERC1155ETH(
-        IERC1155 nft,
-        ICurve bondingCurve,
-        address payable assetRecipient,
-        ILSSVMPair.PoolType poolType,
-        uint128 delta,
-        uint96 fee,
-        uint128 spotPrice,
-        uint256 nftId,
-        uint256 initialNFTBalance,
-        address hookAddress,
-        address referralAddress
-    ) external payable returns (ILSSVMPair pair);
 
     function createPairERC1155ERC20(
         ILSSVMPairFactory.CreateERC1155ERC20PairParams calldata params
@@ -180,16 +145,7 @@ interface ICurve {
 }
 
 interface IAllowListHook {
-    function modifyAllowListSingleBuyer(
-        uint256[] calldata nftIds,
-        address buyer
-    ) external;
-
-    function updateAllowListWithNewRouter(
-        address _newRouter,
-        uint256 _offset,
-        uint256 _limit
-    ) external;
+    function updateAllowListWithNewRouter(address _newRouter) external;
 }
 
 interface IVRFConsumer {
