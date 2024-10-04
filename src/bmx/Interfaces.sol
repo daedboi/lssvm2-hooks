@@ -159,6 +159,8 @@ interface ISudoVRFRouter {
         uint256 requestId,
         uint256[] calldata randomWords
     ) external;
+
+    function allowedSenders(address) external view returns (bool);
 }
 
 interface ISudoFactoryWrapper {
