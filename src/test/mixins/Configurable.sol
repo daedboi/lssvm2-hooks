@@ -3,6 +3,7 @@ pragma solidity ^0.8.0;
 
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {IERC1155} from "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
+import {ERC20} from "solmate/tokens/ERC20.sol";
 
 import {LSSVMPair} from "../../LSSVMPair.sol";
 import {RoyaltyEngine} from "../../RoyaltyEngine.sol";
@@ -18,6 +19,10 @@ import {LSSVMPairERC721ETH} from "../../erc721/LSSVMPairERC721ETH.sol";
 import {LSSVMPairERC1155ETH} from "../../erc1155/LSSVMPairERC1155ETH.sol";
 import {LSSVMPairERC721ERC20} from "../../erc721/LSSVMPairERC721ERC20.sol";
 import {LSSVMPairERC1155ERC20} from "../../erc1155/LSSVMPairERC1155ERC20.sol";
+import {SudoFactoryWrapper} from "../../bmx/SudoFactoryWrapper.sol";
+import {SudoVRFRouter} from "../../bmx/SudoVRFRouter.sol";
+import {AllowListHook} from "../../hooks/AllowListHook.sol";
+import {Test20} from "../../mocks/Test20.sol";
 
 abstract contract Configurable {
     function setupFactory(RoyaltyEngine royaltyEngine, address payable feeRecipient)
@@ -58,6 +63,30 @@ abstract contract Configurable {
             protocolFeeMultiplier,
             address(this)
         );
+    }
+
+    function setupFactoryWrapper(LSSVMPairFactory factory, address[] memory whitelistedTokens)
+        public
+        virtual
+        returns (SudoFactoryWrapper)
+    {
+        return new SudoFactoryWrapper(address(factory), 86400, 86400 * 30, whitelistedTokens);
+    }
+
+    function setupSudoVRFRouter(address factoryWrapperAddress, address vrfConsumerAddress, address feeRecipient)
+        public
+        virtual
+        returns (SudoVRFRouter)
+    {
+        return new SudoVRFRouter(vrfConsumerAddress, 14000000000000000, feeRecipient, factoryWrapperAddress);
+    }
+
+    function setupAllowListHook(address factoryWrapperAddress, address sudoVRFRouterAddress)
+        public
+        virtual
+        returns (AllowListHook)
+    {
+        return new AllowListHook(factoryWrapperAddress, sudoVRFRouterAddress);
     }
 
     function getBalance(address a) public virtual returns (uint256);
@@ -124,6 +153,10 @@ abstract contract Configurable {
 
     function setup1155() public virtual returns (IERC1155Mintable) {
         return IERC1155Mintable(address(new Test1155()));
+    }
+
+    function setup20() public virtual returns (ERC20) {
+        return ERC20(address(new Test20()));
     }
 
     function modifyInputAmount(uint256 inputAmount) public virtual returns (uint256);

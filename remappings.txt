@@ -12,4 +12,4 @@ manifoldxyz/=lib/royalty-registry-solidity/contracts/
 solmate/=lib/solmate/src/
 stringutils/=lib/foundry-huff/lib/solidity-stringutils/
 solady/=lib/solady/src
-@chainlink/contracts/=lib/chainlink-contracts/src/
+@chainlink-contracts/=lib/foundry-chainlink-toolkit/lib/chainlink-brownie-contracts/contracts
