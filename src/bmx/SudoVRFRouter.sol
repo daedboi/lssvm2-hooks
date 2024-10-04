@@ -63,6 +63,10 @@ contract SudoVRFRouter is
     /// @notice Mapping from request ID to BuyRequest
     mapping(uint256 => BuyRequest) private buyRequests;
 
+    /// @notice Mapping from pair or user to whether it is allowed to send NFTs to the router
+    /// @dev This is to enforce the AllowListHook
+    mapping(address => bool) public allowedSenders;
+
     // =========================================
     // Structs
     // =========================================
@@ -232,8 +236,8 @@ contract SudoVRFRouter is
             }
         }
 
-        uint256 amountUsed;
-
+        // Mark the pair as allowed before initiating the swap
+        allowedSenders[request.pair] = true;
         // Perform the swap through the pair
         try
             pair.swapTokenForSpecificNFTs(
@@ -244,19 +248,36 @@ contract SudoVRFRouter is
                 address(this)
             )
         returns (uint256 _amountUsed) {
-            amountUsed = _amountUsed;
+            // Unmark the pair as allowed
+            allowedSenders[request.pair] = false;
+
+            // Transfer NFTs to user
             _transferNFTs(address(this), user, pair, randomNFTIds, false); // Transfer NFTs to user
-            _transferTokens(feeRecipient, wrapperFee, pair, false); // Transfer fee to fee recipient
+
+            // Transfer fee to fee recipient
+            _transferTokens(feeRecipient, wrapperFee, pair, false);
+
+            // Return the leftover to user
+            if (_amountUsed < swapAmount) {
+                _transferTokens(
+                    request.user,
+                    swapAmount - _amountUsed,
+                    pair,
+                    false
+                );
+            }
         } catch {
+            // Unmark the pair as allowed
+            allowedSenders[request.pair] = false;
+
             // Reset claimed state
             request.cancelled = true;
-            _transferTokens(user, request.inputAmount, pair, true); // Refund user
+
+            // Refund user
+            _transferTokens(user, request.inputAmount, pair, true);
+
             emit RequestFailed(user, _requestId);
             return;
-        }
-
-        if (amountUsed < swapAmount) {
-            _transferTokens(request.user, swapAmount - amountUsed, pair, false); // Return the leftover to user
         }
 
         request.claimedTokenIds = randomNFTIds;
@@ -348,8 +369,10 @@ contract SudoVRFRouter is
             "Insufficient funds to buy NFTs"
         );
 
+        ERC20 token = pair.token();
+
         // For ERC20 pairs, transfer tokens from the buyer to this contract and approve the pair
-        _transferTokens(msg.sender, _maxExpectedTokenInput, pair, false);
+        token.safeTransferFrom(msg.sender, address(this), _maxExpectedTokenInput);
         pair.token().safeApprove(_pair, _maxExpectedTokenInput);
 
         requestId = vrfConsumer.requestRandomWords(uint32(_nftAmount));
@@ -399,8 +422,15 @@ contract SudoVRFRouter is
             "Pair is not a buy pool"
         );
 
+        // Mark the user as an allowed sender
+        allowedSenders[msg.sender] = true;
+
         // Transfer NFTs from the seller to this contract and approve the pair
         _transferNFTs(msg.sender, address(this), pair, _nftIds, true);
+
+        // Unmark the user as an allowed sender and mark the pair as one
+        allowedSenders[msg.sender] = false;
+        allowedSenders[_pair] = true;
 
         // Perform the swap through the pair and transfer tokens to the seller
         uint256 amountBeforeWrapperFee = pair.swapNFTsForToken(
@@ -410,6 +440,9 @@ contract SudoVRFRouter is
             false,
             address(this)
         );
+
+        // Unmark the pair as an allowed sender
+        allowedSenders[_pair] = false;
 
         // Calculate the  wrapper fee
         (, uint256 wrapperFee, ) = calculateBuyOrSell(
@@ -643,5 +676,36 @@ contract SudoVRFRouter is
                 nft.setApprovalForAll(address(_pair), true);
             }
         }
+    }
+
+    // =========================================
+    // Overrides
+    // =========================================
+
+    // Override onERC721Received to accept transfers only from allowed pairs
+    function onERC721Received(
+        address,
+        address from,
+        uint256,
+        bytes memory
+    ) public override returns (bytes4) {
+        if (!allowedSenders[from]) {
+            revert("Transfer not allowed");
+        }
+        return this.onERC721Received.selector;
+    }
+
+    // Override onERC1155Received to accept transfers only from allowed pairs
+    function onERC1155Received(
+        address,
+        address from,
+        uint256,
+        uint256,
+        bytes memory
+    ) public override returns (bytes4) {
+        if (!allowedSenders[from]) {
+            revert("Transfer not allowed");
+        }
+        return this.onERC1155Received.selector;
     }
 }

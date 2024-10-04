@@ -27,8 +27,9 @@ import {RoyaltyEngine} from "../../RoyaltyEngine.sol";
 import {IMintable} from "../interfaces/IMintable.sol";
 import {LSSVMPair} from "../../LSSVMPair.sol";
 import {UsingERC20} from "../mixins/UsingERC20.sol";
+import {MockVRFConsumer} from "../../mocks/MockVRFConsumer.sol";
 
-contract AllowListHookTest is
+contract BMXContractsTest is
     Test,
     ConfigurableWithRoyalties,
     ERC721Holder,
@@ -48,6 +49,7 @@ contract AllowListHookTest is
     LSSVMPair public buyPair;
     LSSVMPair public sellPair;
     RoyaltyEngine royaltyEngine;
+    MockVRFConsumer public vrfConsumer;
 
     function setUp() public {
         // Deploy ERC721 token and mint NFTs
@@ -82,12 +84,18 @@ contract AllowListHookTest is
         whitelistedTokens[0] = address(testToken);
         factoryWrapper = setupFactoryWrapper(pairFactory, whitelistedTokens);
 
+        // Deploy VRFConsumer
+        vrfConsumer = new MockVRFConsumer();
+
         // Deploy SudoVRFRouter
         sudoVRFRouter = setupSudoVRFRouter(
             address(factoryWrapper),
-            address(5), // VRFConsumer address (mocked)
+            address(vrfConsumer), // VRFConsumer address (mocked)
             address(this) // Fee recipient
         );
+
+        // Set SudoVRFRouter in VRFConsumer
+        vrfConsumer.setSudoVRFRouter(address(sudoVRFRouter));
 
         // Initialize AllowListHook with factory wrapper address and sudoVRFRouter address
         hook = setupAllowListHook(
@@ -98,13 +106,7 @@ contract AllowListHookTest is
         // Set AllowListHook in factory wrapper
         factoryWrapper.setAllowListHook(address(hook));
         // Set SudoVRFRouter in factory wrapper
-        factoryWrapper.updateSudoVRFRouterConfig(
-            address(sudoVRFRouter),
-            0,
-            0,
-            0,
-            0
-        );
+        factoryWrapper.updateSudoVRFRouterConfig(address(sudoVRFRouter), 0, 0);
 
         // Create a buy and sell pool (PoolType.TOKEN and PoolType.NFT) with tokens owned by this contract
         uint128 delta = 0;
@@ -147,6 +149,8 @@ contract AllowListHookTest is
             )
         );
     }
+
+    // Testing AllowListHook + SudoVRFRouter
 
     function test_sellNFTsUnauthorizedRecipientReverts() public {
         // Attempt to sell NFTs with recipient not being sudoVRFRouter
@@ -199,5 +203,95 @@ contract AllowListHookTest is
 
         // Verify that we own the NFT
         assertEq(testNFT.ownerOf(3), address(this));
+    }
+
+    function test_buyNFTsAuthorizedRecipientSucceeds() public {
+        // Alice buys NFTs through SudoVRFRouter
+        address alice = address(1);
+        IMintable(address(testToken)).mint(alice, 2 ether);
+        vm.startPrank(alice);
+        testToken.approve(address(sudoVRFRouter), 2 ether);
+        uint256 requestId = sudoVRFRouter.buyRandomNFTs(
+            address(sellPair),
+            1,
+            2 ether
+        );
+        vm.stopPrank();
+
+        // Simulate next block
+        vm.roll(block.number + 1);
+
+        // Fulfill the random words request
+        vm.prank(address(vrfConsumer)); // Simulate the VRFConsumer calling back
+        vrfConsumer.fulfillRandomWords(requestId);
+
+        // Verify that Alice owns either token ID 0 or token ID 1
+        assertTrue(
+            testNFT.ownerOf(0) == alice || testNFT.ownerOf(1) == alice,
+            "Alice should own token ID 0 or 1"
+        );
+    }
+
+    // Testing SudoFactoryWrapper
+
+    function test_createPairSucceeds() public {
+        address alice = address(1);
+        IERC721Mintable(address(testNFT)).mint(alice, 3);
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = 3;
+        vm.startPrank(alice);
+        testNFT.setApprovalForAll(address(factoryWrapper), true);
+        address pair = factoryWrapper.createPair(
+            false,
+            address(testNFT),
+            address(testToken),
+            address(bondingCurve),
+            0,
+            1 ether,
+            1 days,
+            new uint256[](0),
+            0,
+            0
+        );
+        vm.stopPrank();
+
+        // Verify that the pair was created
+        assertTrue(factoryWrapper.isPair(pair));
+        // Verify that the pair is a sell pair
+        assertTrue(LSSVMPair(pair).poolType() == LSSVMPair.PoolType.NFT);
+        // Verify that alice is the owner of the pair
+        assertTrue(factoryWrapper.getPairCreator(pair) == alice);
+    }
+
+    function test_withdrawPairSucceeds() public {
+        address alice = address(1);
+        IERC721Mintable(address(testNFT)).mint(alice, 3);
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = 3;
+
+        vm.startPrank(alice);
+        testNFT.setApprovalForAll(address(factoryWrapper), true);
+        address pair = factoryWrapper.createPair(
+            false,
+            address(testNFT),
+            address(testToken),
+            address(bondingCurve),
+            0,
+            1 ether,
+            1 days,
+            new uint256[](0),
+            0,
+            0
+        );
+
+        vm.warp(block.timestamp + 1 days);
+
+        factoryWrapper.withdrawPair(pair);
+        vm.stopPrank();
+
+        // Verify that the pair was withdrawn
+        (, , bool hasWithdrawn) = factoryWrapper.pairInfo(pair);
+        assertTrue(hasWithdrawn);
+        assertTrue(LSSVMPair(pair).owner() == alice);
     }
 }
