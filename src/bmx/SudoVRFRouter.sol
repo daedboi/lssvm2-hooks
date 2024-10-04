@@ -74,8 +74,8 @@ contract SudoVRFRouter is
         address pair;
         uint256 nftAmount;
         uint256 inputAmount;
-        uint256[] claimedTokenIds;
         uint256 timestamp;
+        uint256[] claimedTokenIds;
     }
 
     // =========================================
@@ -211,6 +211,9 @@ contract SudoVRFRouter is
             return;
         }
 
+        // Get the amount to swap for the NFTs incl. any slippage set
+        uint256 swapAmount = request.inputAmount - wrapperFee;
+
         // Get random NFT IDs from allPairNFTIds using _randomWords
         uint256[] memory randomNFTIds = new uint256[](request.nftAmount);
         uint256 n = allPairNFTIds.length;
@@ -229,9 +232,6 @@ contract SudoVRFRouter is
             }
         }
 
-        // request.inputAmount is finalPrice + slippage so we deduct the finalPrice from it
-        uint256 swapAmount = (finalPrice - wrapperFee) +
-            (request.inputAmount - finalPrice);
         uint256 amountUsed;
 
         // Perform the swap through the pair
