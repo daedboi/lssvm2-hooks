@@ -349,7 +349,7 @@ contract SudoVRFRouter is
         if (userRequests.length > 0) {
             uint256 lastRequestId = userRequests[userRequests.length - 1];
             require(
-                buyRequests[lastRequestId].claimedTokenIds.length == 0 ||
+                buyRequests[lastRequestId].claimedTokenIds.length != 0 ||
                     buyRequests[lastRequestId].cancelled,
                 "User has an unfulfilled buy request which is not cancelled"
             );
