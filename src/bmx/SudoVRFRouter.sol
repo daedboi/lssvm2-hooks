@@ -6,11 +6,9 @@ import {SafeTransferLib} from "solmate/utils/SafeTransferLib.sol";
 import {FixedPointMathLib} from "solmate/utils/FixedPointMathLib.sol";
 
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
-import {IERC1155} from "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
 import {Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import {ERC721Holder} from "@openzeppelin/contracts/token/ERC721/utils/ERC721Holder.sol";
-import {ERC1155Holder} from "@openzeppelin/contracts/token/ERC1155/utils/ERC1155Holder.sol";
 
 import {ILSSVMPairFactory, ILSSVMPair, IVRFConsumer, ISudoFactoryWrapper, IAllowListHook} from "./Interfaces.sol";
 
@@ -19,12 +17,7 @@ import {ILSSVMPairFactory, ILSSVMPair, IVRFConsumer, ISudoFactoryWrapper, IAllow
  * @author 0xdaedboi
  * @notice This contract is used as a router for buying and selling SudoSwap pairs with Chainlink randomness enabled for buying NFTs.
  */
-contract SudoVRFRouter is
-    Ownable2Step,
-    ReentrancyGuard,
-    ERC721Holder,
-    ERC1155Holder
-{
+contract SudoVRFRouter is Ownable2Step, ReentrancyGuard, ERC721Holder {
     using SafeTransferLib for ERC20;
     using FixedPointMathLib for uint256;
 
@@ -203,7 +196,6 @@ contract SudoVRFRouter is
         (uint256 finalPrice, uint256 wrapperFee, ) = calculateBuyOrSell(
             request.pair,
             request.nftAmount,
-            0, // Asset ID is 0 for ERC721
             true // It's a buy operation
         );
 
@@ -361,7 +353,6 @@ contract SudoVRFRouter is
         (uint256 finalPrice, , ) = calculateBuyOrSell(
             _pair,
             _nftAmount,
-            0, // Asset ID is 0 for ERC721
             true // It's a buy operation
         );
         require(
@@ -371,8 +362,12 @@ contract SudoVRFRouter is
 
         ERC20 token = pair.token();
 
-        // For ERC20 pairs, transfer tokens from the buyer to this contract and approve the pair
-        token.safeTransferFrom(msg.sender, address(this), _maxExpectedTokenInput);
+        // Transfer tokens from the buyer to this contract and approve the pair
+        token.safeTransferFrom(
+            msg.sender,
+            address(this),
+            _maxExpectedTokenInput
+        );
         pair.token().safeApprove(_pair, _maxExpectedTokenInput);
 
         requestId = vrfConsumer.requestRandomWords(uint32(_nftAmount));
@@ -393,7 +388,7 @@ contract SudoVRFRouter is
     /**
      * @notice Sells NFTs to a pair.
      * @param _pair The address of the pair to sell to.
-     * @param _nftIds The IDs of the NFTs to sell for ERC721 or the amount for ERC1155.
+     * @param _nftIds The IDs of the NFTs to sell for ERC721.
      * @param _minExpectedTokenOutput The minimum expected token output.
      * @return outputAmount The amount of tokens received after sale.
      */
@@ -448,7 +443,6 @@ contract SudoVRFRouter is
         (, uint256 wrapperFee, ) = calculateBuyOrSell(
             _pair,
             _nftIds.length,
-            _nftIds[0],
             false
         );
         outputAmount = amountBeforeWrapperFee - wrapperFee;
@@ -477,7 +471,6 @@ contract SudoVRFRouter is
      * @notice Calculates the final price, wrapper fee, and royalty amount for buying or selling NFTs.
      * @param _pair The address of the pair.
      * @param _nftAmount The number of NFTs to buy or sell.
-     * @param _assetId The ID of the asset (only needed for selling ERC1155, set to 0 for ERC721).
      * @param _isBuy True if the operation is a buy, false if it's a sell.
      * @return finalPrice The final price the user has to pay or receive.
      * @return wrapperFee The wrapper fee associated with the transaction.
@@ -486,7 +479,6 @@ contract SudoVRFRouter is
     function calculateBuyOrSell(
         address _pair,
         uint256 _nftAmount,
-        uint256 _assetId,
         bool _isBuy
     )
         public
@@ -519,7 +511,7 @@ contract SudoVRFRouter is
                 uint256 totalAmountReceived,
                 uint256 _sudoswapFee,
                 uint256 _royaltyAmount
-            ) = pair.getSellNFTQuote(_assetId, _nftAmount);
+            ) = pair.getSellNFTQuote(0, _nftAmount);
 
             uint256 amountExcludingFees = totalAmountReceived +
                 _sudoswapFee +
@@ -636,11 +628,11 @@ contract SudoVRFRouter is
     }
 
     /**
-     * @notice Transfers multiple ERC721 or ERC1155 tokens from one address to another.
+     * @notice Transfers multiple ERC721 tokens from one address to another.
      * @param _from Address to transfer tokens from.
      * @param _to Address to transfer tokens to.
      * @param _pair The address of the pair.
-     * @param _tokenIDs Array of token IDs to transfer for ERC721 or amounts for ERC1155.
+     * @param _tokenIDs Array of token IDs to transfer for ERC721.
      * @param _shouldApprove True if the NFTs should be approved for pair, false if not.
      */
     function _transferNFTs(
@@ -650,31 +642,17 @@ contract SudoVRFRouter is
         uint256[] memory _tokenIDs,
         bool _shouldApprove
     ) internal {
-        if (_isERC721Pair(_pair)) {
-            IERC721 nft = IERC721(_pair.nft());
-            for (uint256 i = 0; i < _tokenIDs.length; ) {
-                nft.safeTransferFrom(_from, _to, _tokenIDs[i]);
+        IERC721 nft = IERC721(_pair.nft());
+        for (uint256 i = 0; i < _tokenIDs.length; ) {
+            nft.safeTransferFrom(_from, _to, _tokenIDs[i]);
 
-                // Gas savings
-                unchecked {
-                    ++i;
-                }
+            // Gas savings
+            unchecked {
+                ++i;
             }
-            if (_shouldApprove) {
-                nft.setApprovalForAll(address(_pair), true);
-            }
-        } else {
-            IERC1155 nft = IERC1155(_pair.nft());
-            nft.safeTransferFrom(
-                _from,
-                _to,
-                _pair.nftId(),
-                _tokenIDs[0],
-                bytes("")
-            );
-            if (_shouldApprove) {
-                nft.setApprovalForAll(address(_pair), true);
-            }
+        }
+        if (_shouldApprove) {
+            nft.setApprovalForAll(address(_pair), true);
         }
     }
 
@@ -682,7 +660,7 @@ contract SudoVRFRouter is
     // Overrides
     // =========================================
 
-    // Override onERC721Received to accept transfers only from allowed pairs
+    // Override onERC721Received to accept safe transfers only from allowed senders
     function onERC721Received(
         address,
         address from,
@@ -693,19 +671,5 @@ contract SudoVRFRouter is
             revert("Transfer not allowed");
         }
         return this.onERC721Received.selector;
-    }
-
-    // Override onERC1155Received to accept transfers only from allowed pairs
-    function onERC1155Received(
-        address,
-        address from,
-        uint256,
-        uint256,
-        bytes memory
-    ) public override returns (bytes4) {
-        if (!allowedSenders[from]) {
-            revert("Transfer not allowed");
-        }
-        return this.onERC1155Received.selector;
     }
 }

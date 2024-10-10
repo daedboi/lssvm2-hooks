@@ -3,7 +3,6 @@ pragma solidity ^0.8.0;
 
 import {ERC20} from "solmate/tokens/ERC20.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
-import {IERC1155} from "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
 
 contract CurveErrorCodes {
     enum Error {
@@ -115,28 +114,8 @@ interface ILSSVMPairFactory {
         address referralAddress;
     }
 
-    struct CreateERC1155ERC20PairParams {
-        ERC20 token;
-        IERC1155 nft;
-        ICurve bondingCurve;
-        address payable assetRecipient;
-        ILSSVMPair.PoolType poolType;
-        uint128 delta;
-        uint96 fee;
-        uint128 spotPrice;
-        uint256 nftId;
-        uint256 initialNFTBalance;
-        uint256 initialTokenBalance;
-        address hookAddress;
-        address referralAddress;
-    }
-
     function createPairERC721ERC20(
         ILSSVMPairFactory.CreateERC721ERC20PairParams calldata params
-    ) external returns (ILSSVMPair pair);
-
-    function createPairERC1155ERC20(
-        ILSSVMPairFactory.CreateERC1155ERC20PairParams calldata params
     ) external returns (ILSSVMPair pair);
 }
 

@@ -128,8 +128,7 @@ contract BMXContractsTest is
                 spotPrice,
                 lockDuration,
                 new uint256[](0),
-                initialTokenBalance,
-                0
+                initialTokenBalance
             )
         );
 
@@ -144,7 +143,6 @@ contract BMXContractsTest is
                 spotPrice,
                 lockDuration,
                 ids,
-                0,
                 0
             )
         );
@@ -250,7 +248,6 @@ contract BMXContractsTest is
             1 ether,
             1 days,
             new uint256[](0),
-            0,
             0
         );
         vm.stopPrank();
@@ -280,7 +277,6 @@ contract BMXContractsTest is
             1 ether,
             1 days,
             new uint256[](0),
-            0,
             0
         );
 

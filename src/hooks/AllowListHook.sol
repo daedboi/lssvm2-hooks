@@ -6,7 +6,6 @@ import {LSSVMPair} from "../LSSVMPair.sol";
 
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
-import {IERC1155} from "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
 import {Owned} from "solmate/auth/Owned.sol";
 import {ISudoVRFRouter} from "../bmx/Interfaces.sol";
 
@@ -151,33 +150,11 @@ contract AllowListHook is IPairHooks, Owned {
     function _checkAllowList(uint256[] calldata _nfts) internal {
         address nftAddress = LSSVMPair(msg.sender).nft();
 
-        // Detect the NFT interface
-        bool isERC721 = IERC165(nftAddress).supportsInterface(
-            type(IERC721).interfaceId
-        );
-        bool isERC1155 = IERC165(nftAddress).supportsInterface(
-            type(IERC1155).interfaceId
-        );
-
-        if (isERC721) {
+        // Check the NFT interface
+        if (IERC165(nftAddress).supportsInterface(type(IERC721).interfaceId)) {
             for (uint256 i = 0; i < _nfts.length; ) {
                 uint256 id = _nfts[i];
                 if (IERC721(nftAddress).ownerOf(id) != sudoVRFRouter) {
-                    revert AllowListHook__WrongOwner();
-                }
-
-                unchecked {
-                    ++i;
-                }
-            }
-        } else if (isERC1155) {
-            for (uint256 i = 0; i < _nfts.length; ) {
-                uint256 id = _nfts[i];
-                uint256 balance = IERC1155(nftAddress).balanceOf(
-                    sudoVRFRouter,
-                    id
-                );
-                if (balance == 0) {
                     revert AllowListHook__WrongOwner();
                 }
 
