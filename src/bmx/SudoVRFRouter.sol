@@ -417,14 +417,10 @@ contract SudoVRFRouter is Ownable2Step, ReentrancyGuard, ERC721Holder {
             "Pair is not a buy pool"
         );
 
-        // Mark the user as an allowed sender
-        allowedSenders[msg.sender] = true;
-
         // Transfer NFTs from the seller to this contract and approve the pair
         _transferNFTs(msg.sender, address(this), pair, _nftIds, true);
 
-        // Unmark the user as an allowed sender and mark the pair as one
-        allowedSenders[msg.sender] = false;
+        // Mark the pair as an allowed sender
         allowedSenders[_pair] = true;
 
         // Perform the swap through the pair and transfer tokens to the seller
@@ -644,7 +640,7 @@ contract SudoVRFRouter is Ownable2Step, ReentrancyGuard, ERC721Holder {
     ) internal {
         IERC721 nft = IERC721(_pair.nft());
         for (uint256 i = 0; i < _tokenIDs.length; ) {
-            nft.safeTransferFrom(_from, _to, _tokenIDs[i]);
+            nft.transferFrom(_from, _to, _tokenIDs[i]);
 
             // Gas savings
             unchecked {
