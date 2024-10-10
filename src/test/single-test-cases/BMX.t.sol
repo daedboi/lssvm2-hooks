@@ -7,6 +7,7 @@ import {ERC20} from "solmate/tokens/ERC20.sol";
 import {ERC721Holder} from "@openzeppelin/contracts/token/ERC721/utils/ERC721Holder.sol";
 import {ERC1155Holder} from "@openzeppelin/contracts/token/ERC1155/utils/ERC1155Holder.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
+import {IERC1155} from "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
 import {RoyaltyRegistry} from "manifoldxyz/RoyaltyRegistry.sol";
 import {ERC2981} from "@openzeppelin/contracts/token/common/ERC2981.sol";
 
@@ -23,6 +24,7 @@ import {Test721} from "../../mocks/Test721.sol";
 import {Test20} from "../../mocks/Test20.sol";
 import {Test2981} from "../../mocks/Test2981.sol";
 import {IERC721Mintable} from "../interfaces/IERC721Mintable.sol";
+import {IERC1155Mintable} from "../interfaces/IERC1155Mintable.sol";
 import {RoyaltyEngine} from "../../RoyaltyEngine.sol";
 import {IMintable} from "../interfaces/IMintable.sol";
 import {LSSVMPair} from "../../LSSVMPair.sol";
@@ -232,7 +234,7 @@ contract BMXContractsTest is
 
     // Testing SudoFactoryWrapper
 
-    function test_createPairSucceeds() public {
+    function test_createERC721PairSucceeds() public {
         address alice = address(1);
         IERC721Mintable(address(testNFT)).mint(alice, 3);
         uint256[] memory ids = new uint256[](1);
@@ -258,6 +260,54 @@ contract BMXContractsTest is
         assertTrue(LSSVMPair(pair).poolType() == LSSVMPair.PoolType.NFT);
         // Verify that alice is the owner of the pair
         assertTrue(factoryWrapper.getPairCreator(pair) == alice);
+    }
+
+    function test_createERC1155PairReverts() public {
+        IERC1155 test1155 = setup1155();
+        address alice = address(1);
+        IERC1155Mintable(address(test1155)).mint(alice, 1, 100);
+        vm.startPrank(alice);
+        test1155.setApprovalForAll(address(factoryWrapper), true);
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = 1;
+        vm.expectRevert(); // Should revert because ERC1155 is not supported
+        factoryWrapper.createPair(
+            false,
+            address(test1155),
+            address(testToken),
+            address(bondingCurve),
+            0,
+            1 ether,
+            1 days,
+            ids,
+            0
+        );
+    }
+
+    function test_rescueERC20TokensSucceeds() public {
+        address alice = address(1);
+        IMintable(address(testToken)).mint(alice, 1 ether);
+        vm.startPrank(alice);
+        testToken.transfer(address(sudoVRFRouter), 1 ether);
+        vm.stopPrank();
+
+        uint256[] memory amountOrIds = new uint256[](1);
+        amountOrIds[0] = 1 ether;
+        sudoVRFRouter.rescueTokens(true, address(testToken), amountOrIds);
+        assertEq(testToken.balanceOf(address(this)), 100 ether); // we deploy a buy pair with 1 eth at start so left with 99, expect 100
+    }
+
+    function test_rescueERC721TokensSucceeds() public {
+        address alice = address(1);
+        IERC721Mintable(address(testNFT)).mint(alice, 1337);
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = 1337;
+        vm.startPrank(alice);
+        testNFT.transferFrom(alice, address(sudoVRFRouter), 1337);
+        vm.stopPrank();
+
+        sudoVRFRouter.rescueTokens(false, address(testNFT), ids);
+        assertEq(testNFT.ownerOf(1337), address(this));
     }
 
     function test_withdrawPairSucceeds() public {

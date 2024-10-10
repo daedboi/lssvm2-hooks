@@ -585,20 +585,42 @@ contract SudoVRFRouter is Ownable2Step, ReentrancyGuard, ERC721Holder {
         emit AllowListHookUpdated(_newAllowListHook);
     }
 
+    /**
+     * @notice Rescues tokens or NFTs from the contract.
+     * @param _isERC20 True if the token is an ERC20, false if it's an ERC721.
+     * @param _token The address of the token or NFT.
+     * @param _amountOrIds The amount or IDs of the token or NFT to rescue.
+     */
+    function rescueTokens(
+        bool _isERC20,
+        address _token,
+        uint256[] calldata _amountOrIds
+    ) external onlyOwner {
+        require(_token != address(0), "Invalid token");
+
+        if (_isERC20) {
+            require(_amountOrIds[0] > 0, "Invalid input");
+            ERC20(_token).safeTransfer(msg.sender, _amountOrIds[0]);
+        } else {
+            require(_amountOrIds.length > 0, "Invalid input");
+            for (uint256 i = 0; i < _amountOrIds.length; ) {
+                IERC721(_token).transferFrom(
+                    address(this),
+                    msg.sender,
+                    _amountOrIds[i]
+                );
+
+                // Gas savings
+                unchecked {
+                    ++i;
+                }
+            }
+        }
+    }
+
     // =========================================
     // Internal Functions
     // =========================================
-
-    /**
-     * @notice Checks if a pair is an ERC721 pair.
-     * @param pair The LSSVMPair to check.
-     * @return True if the pair is an ERC721 pair.
-     */
-    function _isERC721Pair(ILSSVMPair pair) internal pure returns (bool) {
-        return
-            pair.pairVariant() == ILSSVMPairFactory.PairVariant.ERC721_ETH ||
-            pair.pairVariant() == ILSSVMPairFactory.PairVariant.ERC721_ERC20;
-    }
 
     /**
      * @notice Refunds the user with the specified amount of tokens.
