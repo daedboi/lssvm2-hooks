@@ -34,6 +34,9 @@ contract SudoVRFRouter is Ownable2Step, ReentrancyGuard, ERC721Holder {
     /// @notice SudoFactoryWrapper contract instance
     ISudoFactoryWrapper public immutable factoryWrapper;
 
+    /// @notice SudoSingleFactoryWrapper contract instance
+    ISudoFactoryWrapper public immutable singleFactoryWrapper;
+
     // =========================================
     // State Variables
     // =========================================
@@ -44,11 +47,14 @@ contract SudoVRFRouter is Ownable2Step, ReentrancyGuard, ERC721Holder {
     /// @notice AllowListHook contract instance
     IAllowListHook public allowListHook;
 
-    /// @notice The current fee percentage
+    /// @notice The current main fee percentage, applies to all multi-asset sell listings and any buy listings
     uint256 public fee;
 
     /// @notice The fee recipient address
     address public feeRecipient;
+
+    /// @notice Mapping from collection address to the fee for single-asset sell listings
+    mapping(address => uint256) public collectionToFeeSingle;
 
     /// @notice Mapping from user address to their request IDs
     mapping(address => uint256[]) private userToRequestIds;
@@ -98,6 +104,7 @@ contract SudoVRFRouter is Ownable2Step, ReentrancyGuard, ERC721Holder {
         address indexed pair
     );
     event FeeConfigUpdated(uint256 fee, address feeRecipient);
+    event CollectionFeeUpdated(address indexed nft, uint256 newFee);
     event VRFConsumerUpdated(address newVRFConsumer);
     event AllowListHookUpdated(address newAllowListHook);
     event RequestSubmitted(address indexed user, uint256 indexed requestId);
@@ -115,17 +122,20 @@ contract SudoVRFRouter is Ownable2Step, ReentrancyGuard, ERC721Holder {
      * @param _fee The initial fee percentage.
      * @param _feeRecipient The address of the fee recipient.
      * @param _factoryWrapper The address of the SudoFactoryWrapper contract.
+     * @param _singleFactoryWrapper The address of the SudoSingleFactoryWrapper contract.
      */
     constructor(
         address _vrfConsumer,
         uint256 _fee,
         address _feeRecipient,
-        address _factoryWrapper
+        address _factoryWrapper,
+        address _singleFactoryWrapper
     ) {
         require(
             _vrfConsumer != address(0) &&
                 _feeRecipient != address(0) &&
-                _factoryWrapper != address(0),
+                _factoryWrapper != address(0) &&
+                _singleFactoryWrapper != address(0),
             "Invalid addresses"
         );
         require(_fee <= MAX_FEE, "Wrapper fee cannot be greater than 5%");
@@ -134,6 +144,7 @@ contract SudoVRFRouter is Ownable2Step, ReentrancyGuard, ERC721Holder {
         fee = _fee;
         feeRecipient = _feeRecipient;
         factoryWrapper = ISudoFactoryWrapper(_factoryWrapper);
+        singleFactoryWrapper = ISudoFactoryWrapper(_singleFactoryWrapper);
     }
 
     receive() external payable {
@@ -196,7 +207,8 @@ contract SudoVRFRouter is Ownable2Step, ReentrancyGuard, ERC721Holder {
         (uint256 finalPrice, uint256 wrapperFee, ) = calculateBuyOrSell(
             request.pair,
             request.nftAmount,
-            true // It's a buy operation
+            true, // It's a buy operation
+            false // Not a single-asset buy
         );
 
         if (request.inputAmount < finalPrice) {
@@ -353,7 +365,8 @@ contract SudoVRFRouter is Ownable2Step, ReentrancyGuard, ERC721Holder {
         (uint256 finalPrice, , ) = calculateBuyOrSell(
             _pair,
             _nftAmount,
-            true // It's a buy operation
+            true, // It's a buy operation
+            false // Not a single-asset buy
         );
         require(
             _maxExpectedTokenInput >= finalPrice,
@@ -386,6 +399,81 @@ contract SudoVRFRouter is Ownable2Step, ReentrancyGuard, ERC721Holder {
     }
 
     /**
+     * @notice Buys single NFT from a sell pool.
+     * @param _pair The address of the pair to buy from.
+     * @param _maxExpectedTokenInput The maximum token input expected (including fees and slippage).
+     */
+    function buySingleNFT(
+        address _pair,
+        uint256 _maxExpectedTokenInput
+    ) external nonReentrant {
+        require(
+            singleFactoryWrapper.isPair(_pair),
+            "Pair is not a single-asset pair"
+        );
+        require(_maxExpectedTokenInput > 0, "Invalid _maxExpectedTokenInput");
+        require(
+            block.timestamp < singleFactoryWrapper.getUnlockTime(_pair) ||
+                singleFactoryWrapper.getUnlockTime(_pair) == 0,
+            "Can only buy before pair is unlocked or from initially unlocked pair"
+        );
+
+        (uint256 finalPrice, uint256 wrapperFee, ) = calculateBuyOrSell(
+            _pair,
+            1, // 1 NFT
+            true, // It's a buy operation
+            true // It's a single-asset buy
+        );
+        require(
+            _maxExpectedTokenInput >= finalPrice,
+            "Insufficient funds to buy NFT"
+        );
+
+        ILSSVMPair pair = ILSSVMPair(_pair);
+        uint256[] memory pairNFTIds = pair.getAllIds(); // this should return 1 NFT
+        ERC20 token = pair.token();
+
+        // Transfer tokens from the buyer to this contract and approve the pair
+        token.safeTransferFrom(
+            msg.sender,
+            address(this),
+            _maxExpectedTokenInput
+        );
+        token.safeApprove(_pair, _maxExpectedTokenInput);
+
+        // Get the amount to swap for the NFTs incl. any slippage set
+        uint256 swapAmount = _maxExpectedTokenInput - wrapperFee;
+
+        // Mark the pair as allowed before initiating the swap
+        allowedSenders[_pair] = true;
+
+        // Perform the swap through the pair
+        uint256 amountUsed = pair.swapTokenForSpecificNFTs(
+            pairNFTIds,
+            swapAmount,
+            address(this),
+            false,
+            address(this)
+        );
+
+        // Unmark the pair as allowed
+        allowedSenders[_pair] = false;
+
+        // Transfer NFT to user
+        _transferNFTs(address(this), msg.sender, pair, pairNFTIds, false);
+
+        // Transfer fee to fee recipient
+        _transferTokens(feeRecipient, wrapperFee, pair, false);
+
+        // Return the leftover to user
+        if (amountUsed < swapAmount) {
+            _transferTokens(msg.sender, swapAmount - amountUsed, pair, false);
+        }
+
+        emit NFTsBought(_pair, msg.sender, pairNFTIds, finalPrice, 0);
+    }
+
+    /**
      * @notice Sells NFTs to a pair.
      * @param _pair The address of the pair to sell to.
      * @param _nftIds The IDs of the NFTs to sell for ERC721.
@@ -397,7 +485,6 @@ contract SudoVRFRouter is Ownable2Step, ReentrancyGuard, ERC721Holder {
         uint256[] calldata _nftIds,
         uint256 _minExpectedTokenOutput
     ) external nonReentrant returns (uint256 outputAmount) {
-        require(_pair != address(0), "Invalid pair");
         require(
             factoryWrapper.isPair(_pair) && !factoryWrapper.isRandomPair(_pair),
             "Must be a valid non-random pair"
@@ -439,7 +526,8 @@ contract SudoVRFRouter is Ownable2Step, ReentrancyGuard, ERC721Holder {
         (, uint256 wrapperFee, ) = calculateBuyOrSell(
             _pair,
             _nftIds.length,
-            false
+            false, // It's a sell operation
+            false // Not a single-asset buy
         );
         outputAmount = amountBeforeWrapperFee - wrapperFee;
 
@@ -468,6 +556,7 @@ contract SudoVRFRouter is Ownable2Step, ReentrancyGuard, ERC721Holder {
      * @param _pair The address of the pair.
      * @param _nftAmount The number of NFTs to buy or sell.
      * @param _isBuy True if the operation is a buy, false if it's a sell.
+     * @param _isSingleBuy True if the operation is a single-asset buy.
      * @return finalPrice The final price the user has to pay or receive.
      * @return wrapperFee The wrapper fee associated with the transaction.
      * @return royaltyAmount The royalty amount associated with the transaction.
@@ -475,7 +564,8 @@ contract SudoVRFRouter is Ownable2Step, ReentrancyGuard, ERC721Holder {
     function calculateBuyOrSell(
         address _pair,
         uint256 _nftAmount,
-        bool _isBuy
+        bool _isBuy,
+        bool _isSingleBuy
     )
         public
         view
@@ -496,7 +586,15 @@ contract SudoVRFRouter is Ownable2Step, ReentrancyGuard, ERC721Holder {
             uint256 amountExcludingFees = priceWithoutWrapperFee -
                 _sudoswapFee -
                 _royaltyAmount;
-            wrapperFee = amountExcludingFees.mulWadUp(fee);
+
+            // Determine the fee to apply
+            uint256 finalFee = fee;
+            uint256 collectionFee = collectionToFeeSingle[pair.nft()];
+            if (_isSingleBuy && collectionFee > 0) {
+                finalFee = collectionFee;
+            }
+
+            wrapperFee = amountExcludingFees.mulWadUp(finalFee);
             finalPrice = priceWithoutWrapperFee + wrapperFee;
             royaltyAmount = _royaltyAmount;
         } else {
@@ -512,6 +610,8 @@ contract SudoVRFRouter is Ownable2Step, ReentrancyGuard, ERC721Holder {
             uint256 amountExcludingFees = totalAmountReceived +
                 _sudoswapFee +
                 _royaltyAmount;
+
+            // Selling only uses one fee for both single and multi asset listings
             wrapperFee = amountExcludingFees.mulWadUp(fee);
             finalPrice = totalAmountReceived - wrapperFee;
             royaltyAmount = _royaltyAmount;
@@ -561,6 +661,17 @@ contract SudoVRFRouter is Ownable2Step, ReentrancyGuard, ERC721Holder {
         fee = _newFee;
         feeRecipient = _newFeeRecipient;
         emit FeeConfigUpdated(_newFee, _newFeeRecipient);
+    }
+
+    function setCollectionFee(
+        address _nft,
+        uint256 _newFee
+    ) external onlyOwner {
+        require(_nft != address(0), "Invalid address");
+        require(_newFee <= MAX_FEE, "Fee must be less than 5%");
+
+        collectionToFeeSingle[_nft] = _newFee;
+        emit CollectionFeeUpdated(_nft, _newFee);
     }
 
     /**

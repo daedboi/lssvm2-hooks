@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0
 pragma solidity ^0.8.20;
 
-import {IPairHooks} from "./IPairHooks.sol";
-import {LSSVMPair} from "../LSSVMPair.sol";
-
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {Owned} from "solmate/auth/Owned.sol";
+
+import {IPairHooks} from "./IPairHooks.sol";
+import {LSSVMPair} from "../LSSVMPair.sol";
 import {ISudoVRFRouter} from "../bmx/Interfaces.sol";
 
 /**

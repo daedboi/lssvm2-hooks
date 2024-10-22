@@ -20,20 +20,28 @@ import {LSSVMPairERC1155ETH} from "../../erc1155/LSSVMPairERC1155ETH.sol";
 import {LSSVMPairERC721ERC20} from "../../erc721/LSSVMPairERC721ERC20.sol";
 import {LSSVMPairERC1155ERC20} from "../../erc1155/LSSVMPairERC1155ERC20.sol";
 import {SudoFactoryWrapper} from "../../bmx/SudoFactoryWrapper.sol";
+import {SudoSingleFactoryWrapper} from "../../bmx/SudoSingleFactoryWrapper.sol";
 import {SudoVRFRouter} from "../../bmx/SudoVRFRouter.sol";
 import {AllowListHook} from "../../hooks/AllowListHook.sol";
 import {Test20} from "../../mocks/Test20.sol";
 
 abstract contract Configurable {
-    function setupFactory(RoyaltyEngine royaltyEngine, address payable feeRecipient)
-        public
-        virtual
-        returns (LSSVMPairFactory factory)
-    {
-        LSSVMPairERC721ETH erc721ETHTemplate = new LSSVMPairERC721ETH(royaltyEngine);
-        LSSVMPairERC721ERC20 erc721ERC20Template = new LSSVMPairERC721ERC20(royaltyEngine);
-        LSSVMPairERC1155ETH erc1155ETHTemplate = new LSSVMPairERC1155ETH(royaltyEngine);
-        LSSVMPairERC1155ERC20 erc1155ERC20Template = new LSSVMPairERC1155ERC20(royaltyEngine);
+    function setupFactory(
+        RoyaltyEngine royaltyEngine,
+        address payable feeRecipient
+    ) public virtual returns (LSSVMPairFactory factory) {
+        LSSVMPairERC721ETH erc721ETHTemplate = new LSSVMPairERC721ETH(
+            royaltyEngine
+        );
+        LSSVMPairERC721ERC20 erc721ERC20Template = new LSSVMPairERC721ERC20(
+            royaltyEngine
+        );
+        LSSVMPairERC1155ETH erc1155ETHTemplate = new LSSVMPairERC1155ETH(
+            royaltyEngine
+        );
+        LSSVMPairERC1155ERC20 erc1155ERC20Template = new LSSVMPairERC1155ERC20(
+            royaltyEngine
+        );
         factory = new LSSVMPairFactory(
             erc721ETHTemplate,
             erc721ERC20Template,
@@ -45,15 +53,23 @@ abstract contract Configurable {
         );
     }
 
-    function setupFactory(RoyaltyEngine royaltyEngine, address payable feeRecipient, uint256 protocolFeeMultiplier)
-        public
-        virtual
-        returns (LSSVMPairFactory factory)
-    {
-        LSSVMPairERC721ETH erc721ETHTemplate = new LSSVMPairERC721ETH(royaltyEngine);
-        LSSVMPairERC721ERC20 erc721ERC20Template = new LSSVMPairERC721ERC20(royaltyEngine);
-        LSSVMPairERC1155ETH erc1155ETHTemplate = new LSSVMPairERC1155ETH(royaltyEngine);
-        LSSVMPairERC1155ERC20 erc1155ERC20Template = new LSSVMPairERC1155ERC20(royaltyEngine);
+    function setupFactory(
+        RoyaltyEngine royaltyEngine,
+        address payable feeRecipient,
+        uint256 protocolFeeMultiplier
+    ) public virtual returns (LSSVMPairFactory factory) {
+        LSSVMPairERC721ETH erc721ETHTemplate = new LSSVMPairERC721ETH(
+            royaltyEngine
+        );
+        LSSVMPairERC721ERC20 erc721ERC20Template = new LSSVMPairERC721ERC20(
+            royaltyEngine
+        );
+        LSSVMPairERC1155ETH erc1155ETHTemplate = new LSSVMPairERC1155ETH(
+            royaltyEngine
+        );
+        LSSVMPairERC1155ERC20 erc1155ERC20Template = new LSSVMPairERC1155ERC20(
+            royaltyEngine
+        );
         factory = new LSSVMPairFactory(
             erc721ETHTemplate,
             erc721ERC20Template,
@@ -65,27 +81,54 @@ abstract contract Configurable {
         );
     }
 
-    function setupFactoryWrapper(LSSVMPairFactory factory, address[] memory whitelistedTokens)
-        public
-        virtual
-        returns (SudoFactoryWrapper)
-    {
-        return new SudoFactoryWrapper(address(factory), 86400, 86400 * 30, whitelistedTokens);
+    function setupFactoryWrapper(
+        LSSVMPairFactory factory,
+        address[] memory whitelistedTokens
+    ) public virtual returns (SudoFactoryWrapper) {
+        return
+            new SudoFactoryWrapper(
+                address(factory),
+                86400,
+                86400 * 30,
+                whitelistedTokens
+            );
     }
 
-    function setupSudoVRFRouter(address factoryWrapperAddress, address vrfConsumerAddress, address feeRecipient)
-        public
-        virtual
-        returns (SudoVRFRouter)
-    {
-        return new SudoVRFRouter(vrfConsumerAddress, 14000000000000000, feeRecipient, factoryWrapperAddress);
+    function setupSingleFactoryWrapper(
+        LSSVMPairFactory factory,
+        address bondingCurve,
+        address[] memory whitelistedTokens
+    ) public virtual returns (SudoSingleFactoryWrapper) {
+        return
+            new SudoSingleFactoryWrapper(
+                address(factory),
+                bondingCurve,
+                0,
+                86400 * 30,
+                whitelistedTokens
+            );
     }
 
-    function setupAllowListHook(address factoryWrapperAddress, address sudoVRFRouterAddress)
-        public
-        virtual
-        returns (AllowListHook)
-    {
+    function setupSudoVRFRouter(
+        address factoryWrapperAddress,
+        address singleFactoryWrapperAddress,
+        address vrfConsumerAddress,
+        address feeRecipient
+    ) public virtual returns (SudoVRFRouter) {
+        return
+            new SudoVRFRouter(
+                vrfConsumerAddress,
+                14000000000000000,
+                feeRecipient,
+                factoryWrapperAddress,
+                singleFactoryWrapperAddress
+            );
+    }
+
+    function setupAllowListHook(
+        address factoryWrapperAddress,
+        address sudoVRFRouterAddress
+    ) public virtual returns (AllowListHook) {
         return new AllowListHook(factoryWrapperAddress, sudoVRFRouterAddress);
     }
 
@@ -121,7 +164,9 @@ abstract contract Configurable {
         address hookAddress;
     }
 
-    function setupPairERC1155(CreateERC1155PairParams memory params) public payable virtual returns (LSSVMPair);
+    function setupPairERC1155(
+        CreateERC1155PairParams memory params
+    ) public payable virtual returns (LSSVMPair);
 
     struct PairCreationParamsWithPropertyCheckerERC721 {
         LSSVMPairFactory factory;
@@ -139,11 +184,9 @@ abstract contract Configurable {
         address hookAddress;
     }
 
-    function setupPairWithPropertyCheckerERC721(PairCreationParamsWithPropertyCheckerERC721 memory params)
-        public
-        payable
-        virtual
-        returns (LSSVMPairERC721);
+    function setupPairWithPropertyCheckerERC721(
+        PairCreationParamsWithPropertyCheckerERC721 memory params
+    ) public payable virtual returns (LSSVMPairERC721);
 
     function setupCurve() public virtual returns (ICurve);
 
@@ -159,11 +202,16 @@ abstract contract Configurable {
         return ERC20(address(new Test20()));
     }
 
-    function modifyInputAmount(uint256 inputAmount) public virtual returns (uint256);
+    function modifyInputAmount(
+        uint256 inputAmount
+    ) public virtual returns (uint256);
 
     function modifyDelta(uint128 delta) public virtual returns (uint128);
 
-    function modifyDelta(uint128 delta, uint8 numItems) public virtual returns (uint128);
+    function modifyDelta(
+        uint128 delta,
+        uint8 numItems
+    ) public virtual returns (uint128);
 
     function modifySpotPrice(uint56 spotPrice) public virtual returns (uint56);
 
@@ -173,16 +221,23 @@ abstract contract Configurable {
 
     function withdrawProtocolFees(LSSVMPairFactory factory) public virtual;
 
-    function getParamsForPartialFillTest() public virtual returns (uint128 spotPrice, uint128 delta);
-
-    function getParamsForAdjustingPriceToBuy(LSSVMPair pair, uint256 percentage, bool isIncrease)
+    function getParamsForPartialFillTest()
         public
         virtual
         returns (uint128 spotPrice, uint128 delta);
 
+    function getParamsForAdjustingPriceToBuy(
+        LSSVMPair pair,
+        uint256 percentage,
+        bool isIncrease
+    ) public virtual returns (uint128 spotPrice, uint128 delta);
+
     function getTokenAddress() public virtual returns (address);
 
-    function getReasonableDeltaAndSpotPrice() public virtual returns (uint128 delta, uint128 spotPrice);
+    function getReasonableDeltaAndSpotPrice()
+        public
+        virtual
+        returns (uint128 delta, uint128 spotPrice);
 
     function isETHPool() public virtual returns (bool);
 
