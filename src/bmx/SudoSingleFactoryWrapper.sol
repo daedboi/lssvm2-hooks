@@ -57,6 +57,10 @@ contract SudoSingleFactoryWrapper is
     /// @notice Mapping to store if a token is whitelisted
     mapping(address => bool) public isWhitelistedToken;
 
+    /// @notice Mapping to store if a collection is whitelisted for pair creation
+    /// @dev This is used to allow certain ERC721-compatible collections that don't correctly inherit the interface
+    mapping(address => bool) public isWhitelistedCollection;
+
     /// @notice Mapping to store pair information
     mapping(address => PairInfo) public pairInfo;
 
@@ -93,6 +97,10 @@ contract SudoSingleFactoryWrapper is
         uint256 newMaximumLockDuration
     );
     event WhitelistedTokensUpdated(address[] newWhitelistedTokens, bool isAdd);
+    event WhitelistedCollectionsUpdated(
+        address indexed newWhitelistedCollection,
+        bool isAdd
+    );
 
     // =========================================
     // Constructor
@@ -153,7 +161,7 @@ contract SudoSingleFactoryWrapper is
 
     /**
      * @notice Creates a new locked single-asset ERC721-ERC20 pair for selling NFTs.
-     * @dev ETH is not supported.
+     * @dev ETH is not supported. Supports ERC721 interface-compliant collections or whitelisted collections.
      * @param _nft Address of the NFT contract.
      * @param _token Address of the ERC20 token.
      * @param _spotPrice Initial spot price for the pair.
@@ -179,8 +187,11 @@ contract SudoSingleFactoryWrapper is
         );
         require(isWhitelistedToken[_token], "Token not whitelisted");
 
-        // Check if NFT is ERC721
-        if (IERC165(_nft).supportsInterface(type(IERC721).interfaceId)) {
+        // Check if NFT is ERC721-compatible or whitelisted
+        if (
+            IERC165(_nft).supportsInterface(type(IERC721).interfaceId) ||
+            isWhitelistedCollection[_nft]
+        ) {
             pairAddress = _createERC721ERC20Pair(
                 msg.sender,
                 _nft,
@@ -289,6 +300,11 @@ contract SudoSingleFactoryWrapper is
         emit AllowListHookUpdated(_newAllowListHook);
     }
 
+    /**
+     * @notice Updates the whitelisted tokens for pair creation.
+     * @param _whitelistedTokens Array of addresses of the whitelisted tokens to add/remove.
+     * @param _isAdd Whether to add or remove the tokens.
+     */
     function updateWhitelistedTokens(
         address[] calldata _whitelistedTokens,
         bool _isAdd
@@ -323,6 +339,21 @@ contract SudoSingleFactoryWrapper is
         }
 
         emit WhitelistedTokensUpdated(_whitelistedTokens, _isAdd);
+    }
+
+    /**
+     * @notice Add or remove a whitelisted collection for pair creation.
+     * @param _collection Address of the collection to add/remove.
+     * @param _isAdd Whether to add or remove the collection.
+     */
+    function updateWhitelistedCollection(
+        address _collection,
+        bool _isAdd
+    ) external onlyOwner {
+        require(_collection != address(0), "Invalid collection address");
+
+        isWhitelistedCollection[_collection] = _isAdd;
+        emit WhitelistedCollectionsUpdated(_collection, _isAdd);
     }
 
     /**

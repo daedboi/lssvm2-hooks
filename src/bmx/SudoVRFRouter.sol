@@ -399,7 +399,7 @@ contract SudoVRFRouter is Ownable2Step, ReentrancyGuard, ERC721Holder {
     }
 
     /**
-     * @notice Buys single NFT from a sell pool.
+     * @notice Buys one NFT without VRF from a single-asset sell pool.
      * @param _pair The address of the pair to buy from.
      * @param _maxExpectedTokenInput The maximum token input expected (including fees and slippage).
      */

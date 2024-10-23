@@ -236,6 +236,33 @@ contract BMXContractsTest is
         vm.stopPrank();
     }
 
+    function test_buyOrSellNFTsFromWrongPairReverts() public {
+        address alice = address(1);
+        IERC721Mintable(address(testNFT)).mint(alice, 420);
+        IMintable(address(testToken)).mint(alice, 1 ether);
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = 420;
+        vm.startPrank(alice);
+        testToken.approve(address(sudoVRFRouter), 1 ether);
+        testNFT.setApprovalForAll(address(sudoVRFRouter), true);
+
+        // Use wrong pair with sell NFTS
+        vm.expectRevert();
+        sudoVRFRouter.sellNFTs(address(sellPair), ids, 0.9 ether);
+        vm.expectRevert();
+        sudoVRFRouter.sellNFTs(address(singleAssetPair), ids, 0.9 ether);
+        // Use wrong pair with buy single NFT
+        vm.expectRevert();
+        sudoVRFRouter.buySingleNFT(address(sellPair), 1 ether);
+        vm.expectRevert();
+        sudoVRFRouter.buySingleNFT(address(buyPair), 1 ether);
+        // Use wrong pair with buy random NFTs
+        vm.expectRevert();
+        sudoVRFRouter.buyRandomNFTs(address(singleAssetPair), 1, 1 ether);
+        vm.expectRevert();
+        sudoVRFRouter.buyRandomNFTs(address(buyPair), 1, 1 ether);
+    }
+
     function test_sellNFTsAuthorizedRecipientSucceeds() public {
         // Alice sells NFTs through SudoVRFRouter
         address alice = address(1);
@@ -373,6 +400,45 @@ contract BMXContractsTest is
             1 days,
             ids,
             0
+        );
+    }
+
+    function test_createSingleAssetERC721CustomPairSucceeds() public {
+        address alice = address(1);
+        IERC721Mintable test721Custom = setup721Custom();
+        test721Custom.mint(alice, 8);
+        singleFactoryWrapper.updateWhitelistedCollection(
+            address(test721Custom),
+            true
+        );
+        vm.startPrank(alice);
+        test721Custom.setApprovalForAll(address(singleFactoryWrapper), true);
+        address pair = singleFactoryWrapper.createPair(
+            address(test721Custom),
+            address(testToken),
+            1 ether,
+            0,
+            8
+        );
+        vm.stopPrank();
+
+        // Verify that the pair was created
+        assertTrue(singleFactoryWrapper.isPair(pair));
+    }
+
+    function test_createSingleAssetERC721CustomPairReverts() public {
+        address alice = address(1);
+        IERC721Mintable test721Custom = setup721Custom();
+        test721Custom.mint(alice, 9);
+        vm.startPrank(alice);
+        test721Custom.setApprovalForAll(address(singleFactoryWrapper), true);
+        vm.expectRevert(); // Should revert because ERC721Custom is not whitelisted
+        singleFactoryWrapper.createPair(
+            address(test721Custom),
+            address(testToken),
+            1 ether,
+            0,
+            8
         );
     }
 

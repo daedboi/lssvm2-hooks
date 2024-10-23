@@ -8,6 +8,7 @@ import {ERC20} from "solmate/tokens/ERC20.sol";
 import {LSSVMPair} from "../../LSSVMPair.sol";
 import {RoyaltyEngine} from "../../RoyaltyEngine.sol";
 import {Test721} from "../../mocks/Test721.sol";
+import {Test721Custom} from "../../mocks/Test721Custom.sol";
 import {Test1155} from "../../mocks/Test1155.sol";
 import {ICurve} from "../../bonding-curves/ICurve.sol";
 import {LSSVMPairFactory} from "../../LSSVMPairFactory.sol";
@@ -192,6 +193,10 @@ abstract contract Configurable {
 
     function setup721() public virtual returns (IERC721Mintable) {
         return IERC721Mintable(address(new Test721()));
+    }
+
+    function setup721Custom() public virtual returns (IERC721Mintable) {
+        return IERC721Mintable(address(new Test721Custom()));
     }
 
     function setup1155() public virtual returns (IERC1155Mintable) {

@@ -1,4 +1,5 @@
 [profile.default]
+solc_version = "0.8.20"
 optimizer_runs = 1000000
 remappings = [
   "@manifoldxyz/=lib/",
