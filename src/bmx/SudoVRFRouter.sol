@@ -15,7 +15,7 @@ import {ILSSVMPairFactory, ILSSVMPair, IVRFConsumer, ISudoFactoryWrapper, IAllow
 /**
  * @title SudoVRFRouter
  * @author 0xdaedboi
- * @notice This contract is used as a router for buying and selling SudoSwap pairs with Chainlink randomness enabled for buying NFTs.
+ * @notice This contract is used as a router for buying and selling SudoSwap pairs with Chainlink randomness enabled for buying multiple NFTs.
  */
 contract SudoVRFRouter is Ownable2Step, ReentrancyGuard, ERC721Holder {
     using SafeTransferLib for ERC20;
@@ -401,10 +401,12 @@ contract SudoVRFRouter is Ownable2Step, ReentrancyGuard, ERC721Holder {
     /**
      * @notice Buys one NFT without VRF from a single-asset sell pool.
      * @param _pair The address of the pair to buy from.
+     * @param _nftId The expected NFT ID to buy.
      * @param _maxExpectedTokenInput The maximum token input expected (including fees and slippage).
      */
     function buySingleNFT(
         address _pair,
+        uint256 _nftId,
         uint256 _maxExpectedTokenInput
     ) external nonReentrant {
         require(
@@ -430,8 +432,9 @@ contract SudoVRFRouter is Ownable2Step, ReentrancyGuard, ERC721Holder {
         );
 
         ILSSVMPair pair = ILSSVMPair(_pair);
-        uint256[] memory pairNFTIds = pair.getAllIds(); // this should return 1 NFT
         ERC20 token = pair.token();
+        uint256[] memory nftIds = new uint256[](1);
+        nftIds[0] = _nftId;
 
         // Transfer tokens from the buyer to this contract and approve the pair
         token.safeTransferFrom(
@@ -449,7 +452,7 @@ contract SudoVRFRouter is Ownable2Step, ReentrancyGuard, ERC721Holder {
 
         // Perform the swap through the pair
         uint256 amountUsed = pair.swapTokenForSpecificNFTs(
-            pairNFTIds,
+            nftIds,
             swapAmount,
             address(this),
             false,
@@ -460,7 +463,7 @@ contract SudoVRFRouter is Ownable2Step, ReentrancyGuard, ERC721Holder {
         allowedSenders[_pair] = false;
 
         // Transfer NFT to user
-        _transferNFTs(address(this), msg.sender, pair, pairNFTIds, false);
+        _transferNFTs(address(this), msg.sender, pair, nftIds, false);
 
         // Transfer fee to fee recipient
         _transferTokens(feeRecipient, wrapperFee, pair, false);
@@ -470,7 +473,7 @@ contract SudoVRFRouter is Ownable2Step, ReentrancyGuard, ERC721Holder {
             _transferTokens(msg.sender, swapAmount - amountUsed, pair, false);
         }
 
-        emit NFTsBought(_pair, msg.sender, pairNFTIds, finalPrice, 0);
+        emit NFTsBought(_pair, msg.sender, nftIds, finalPrice, 0);
     }
 
     /**

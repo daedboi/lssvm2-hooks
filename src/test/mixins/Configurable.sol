@@ -105,7 +105,7 @@ abstract contract Configurable {
                 address(factory),
                 bondingCurve,
                 0,
-                86400 * 30,
+                86400 * 7,
                 whitelistedTokens
             );
     }

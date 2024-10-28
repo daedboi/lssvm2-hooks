@@ -45,7 +45,7 @@ contract SudoSingleFactoryWrapper is
     /// @notice Address of the AllowListHook for managing allowed addresses
     address public allowListHook;
 
-    /// @notice Minimum duration that a pair must remain locked
+    /// @notice Minimum duration that a pair must remain locked unless overridden
     uint256 public minLockDuration;
 
     /// @notice Maximum duration that a pair can be locked
@@ -54,12 +54,18 @@ contract SudoSingleFactoryWrapper is
     /// @notice Total whitelisted token count
     uint256 public whitelistedTokenCount;
 
+    /// @notice Array of collections with a specific minimum lock duration set
+    address[] public collectionsWithMinLockDuration;
+
     /// @notice Mapping to store if a token is whitelisted
     mapping(address => bool) public isWhitelistedToken;
 
     /// @notice Mapping to store if a collection is whitelisted for pair creation
     /// @dev This is used to allow certain ERC721-compatible collections that don't correctly inherit the interface
     mapping(address => bool) public isWhitelistedCollection;
+
+    /// @notice Mapping to store collection-specific minimum lock durations
+    mapping(address => uint256) public collectionMinLockDuration;
 
     /// @notice Mapping to store pair information
     mapping(address => PairInfo) public pairInfo;
@@ -100,6 +106,10 @@ contract SudoSingleFactoryWrapper is
     event WhitelistedCollectionsUpdated(
         address indexed newWhitelistedCollection,
         bool isAdd
+    );
+    event CollectionMinLockDurationUpdated(
+        address indexed collection,
+        uint256 newMinLockDuration
     );
 
     // =========================================
@@ -176,16 +186,23 @@ contract SudoSingleFactoryWrapper is
         uint256 _lockDuration,
         uint256 _nftID
     ) external nonReentrant returns (address pairAddress) {
-        require(
-            _nft != address(0) && _token != address(0),
-            "Invalid NFT or token address"
-        );
-        require(
-            _lockDuration >= minLockDuration &&
-                _lockDuration <= maxLockDuration,
-            "Invalid lock duration"
-        );
+        require(_nft != address(0), "Invalid NFT address");
         require(isWhitelistedToken[_token], "Token not whitelisted");
+        require(
+            _lockDuration <= maxLockDuration,
+            "Must be less than max lock duration"
+        );
+        if (collectionMinLockDuration[_nft] > 0) {
+            require(
+                _lockDuration >= collectionMinLockDuration[_nft],
+                "Must be greater than or equal to collection min lock duration"
+            );
+        } else {
+            require(
+                _lockDuration >= minLockDuration,
+                "Must be greater than or equal to global min lock duration"
+            );
+        }
 
         // Check if NFT is ERC721-compatible or whitelisted
         if (
@@ -305,7 +322,7 @@ contract SudoSingleFactoryWrapper is
      * @param _whitelistedTokens Array of addresses of the whitelisted tokens to add/remove.
      * @param _isAdd Whether to add or remove the tokens.
      */
-    function updateWhitelistedTokens(
+    function setWhitelistedTokens(
         address[] calldata _whitelistedTokens,
         bool _isAdd
     ) external onlyOwner {
@@ -346,7 +363,7 @@ contract SudoSingleFactoryWrapper is
      * @param _collection Address of the collection to add/remove.
      * @param _isAdd Whether to add or remove the collection.
      */
-    function updateWhitelistedCollection(
+    function setWhitelistedCollection(
         address _collection,
         bool _isAdd
     ) external onlyOwner {
@@ -357,7 +374,8 @@ contract SudoSingleFactoryWrapper is
     }
 
     /**
-     * @notice Updates the minimum and maximum lock duration.
+     * @notice Updates the global minimum and maximum lock duration.
+     * @dev If a collection has a min lock duration set that is less than the new global min lock duration, it will be removed.
      * @param _newMinLockDuration The new minimum lock duration.
      * @param _newMaxLockDuration The new maximum lock duration.
      */
@@ -374,9 +392,71 @@ contract SudoSingleFactoryWrapper is
             "Invalid maximum lock duration"
         );
 
+        for (uint256 i = 0; i < collectionsWithMinLockDuration.length; ) {
+            if (
+                collectionMinLockDuration[collectionsWithMinLockDuration[i]] <=
+                _newMinLockDuration
+            ) {
+                collectionMinLockDuration[
+                    collectionsWithMinLockDuration[i]
+                ] = 0;
+                collectionsWithMinLockDuration[
+                    i
+                ] = collectionsWithMinLockDuration[
+                    collectionsWithMinLockDuration.length - 1
+                ];
+                collectionsWithMinLockDuration.pop();
+            }
+
+            unchecked {
+                ++i;
+            }
+        }
+
         minLockDuration = _newMinLockDuration;
         maxLockDuration = _newMaxLockDuration;
         emit LockDurationsUpdated(_newMinLockDuration, _newMaxLockDuration);
+    }
+
+    /**
+     * @notice Updates the minimum lock duration for a specific collection.
+     * @dev Must be greater than the global minimum lock duration and less than the global maximum lock duration.
+     * @param _collection Address of the collection.
+     * @param _minLockDuration The new minimum lock duration.
+     */
+    function setCollectionMinLockDuration(
+        address _collection,
+        uint256 _minLockDuration
+    ) external onlyOwner {
+        require(_collection != address(0), "Invalid collection address");
+        if (_minLockDuration == 0) {
+            collectionMinLockDuration[_collection] = 0;
+            for (uint256 i = 0; i < collectionsWithMinLockDuration.length; ) {
+                if (collectionsWithMinLockDuration[i] == _collection) {
+                    collectionsWithMinLockDuration[
+                        i
+                    ] = collectionsWithMinLockDuration[
+                        collectionsWithMinLockDuration.length - 1
+                    ];
+                    collectionsWithMinLockDuration.pop();
+                }
+
+                unchecked {
+                    ++i;
+                }
+            }
+        } else {
+            require(
+                _minLockDuration > minLockDuration &&
+                    _minLockDuration < maxLockDuration,
+                "Invalid min lock duration"
+            );
+
+            collectionMinLockDuration[_collection] = _minLockDuration;
+            collectionsWithMinLockDuration.push(_collection);
+        }
+
+        emit CollectionMinLockDurationUpdated(_collection, _minLockDuration);
     }
 
     // =========================================

@@ -253,9 +253,9 @@ contract BMXContractsTest is
         sudoVRFRouter.sellNFTs(address(singleAssetPair), ids, 0.9 ether);
         // Use wrong pair with buy single NFT
         vm.expectRevert();
-        sudoVRFRouter.buySingleNFT(address(sellPair), 1 ether);
+        sudoVRFRouter.buySingleNFT(address(sellPair), 2, 1 ether);
         vm.expectRevert();
-        sudoVRFRouter.buySingleNFT(address(buyPair), 1 ether);
+        sudoVRFRouter.buySingleNFT(address(buyPair), 2, 1 ether);
         // Use wrong pair with buy random NFTs
         vm.expectRevert();
         sudoVRFRouter.buyRandomNFTs(address(singleAssetPair), 1, 1 ether);
@@ -286,7 +286,7 @@ contract BMXContractsTest is
         IMintable(address(testToken)).mint(alice, 1.5 ether);
         vm.startPrank(alice);
         testToken.approve(address(sudoVRFRouter), 1.5 ether);
-        sudoVRFRouter.buySingleNFT(address(singleAssetPair), 1.5 ether);
+        sudoVRFRouter.buySingleNFT(address(singleAssetPair), 2, 1.5 ether);
         vm.stopPrank();
 
         // Verify that Alice owns the NFT
@@ -407,7 +407,7 @@ contract BMXContractsTest is
         address alice = address(1);
         IERC721Mintable test721Custom = setup721Custom();
         test721Custom.mint(alice, 8);
-        singleFactoryWrapper.updateWhitelistedCollection(
+        singleFactoryWrapper.setWhitelistedCollection(
             address(test721Custom),
             true
         );
@@ -519,5 +519,96 @@ contract BMXContractsTest is
         (, , bool hasWithdrawn) = singleFactoryWrapper.pairInfo(pair);
         assertTrue(hasWithdrawn);
         assertTrue(LSSVMPair(pair).owner() == alice);
+    }
+
+    /// @notice Test that creating a pair with a lock duration less than the collection-specific minimum reverts
+    function test_createPairBelowCollectionMinLockDurationReverts() public {
+        // Set collection-specific minLockDuration for testNFT to 1 day
+        singleFactoryWrapper.setCollectionMinLockDuration(
+            address(testNFT),
+            1 days
+        );
+
+        // Attempt to create a pair with lock duration less than collection-specific minLockDuration
+        uint256 nftID = 100;
+        IERC721Mintable(address(testNFT)).mint(address(this), nftID);
+        testNFT.approve(address(singleFactoryWrapper), nftID);
+
+        vm.expectRevert(
+            "Must be greater than or equal to collection min lock duration"
+        );
+        singleFactoryWrapper.createPair(
+            address(testNFT),
+            address(testToken),
+            1 ether,
+            0.5 days,
+            nftID
+        );
+    }
+
+    /// @notice Test that creating a pair with a lock duration equal to the collection-specific minimum succeeds
+    function test_createPairAtCollectionMinLockDurationSucceeds() public {
+        // Set collection-specific minLockDuration for testNFT to 1 day
+        singleFactoryWrapper.setCollectionMinLockDuration(
+            address(testNFT),
+            1 days
+        );
+
+        // Create a pair with lock duration equal to collection-specific minLockDuration
+        uint256 lockDuration = 1 days;
+
+        uint256 nftID = 101;
+        IERC721Mintable(address(testNFT)).mint(address(this), nftID);
+        testNFT.approve(address(singleFactoryWrapper), nftID);
+
+        address pair = singleFactoryWrapper.createPair(
+            address(testNFT),
+            address(testToken),
+            1 ether,
+            lockDuration,
+            nftID
+        );
+
+        // Verify that the pair was created successfully
+        assertTrue(singleFactoryWrapper.isPair(pair));
+        // Verify that the lock duration is set correctly
+        (uint256 unlockTime, , ) = singleFactoryWrapper.pairInfo(pair);
+        assertEq(unlockTime, block.timestamp + lockDuration);
+    }
+
+    /// @notice Test that collection-specific min lock duration is removed when global min lock duration is increased
+    function test_collectionMinLockDurationRemovedWhenGlobalMinIncreased()
+        public
+    {
+        // Set collection-specific minLockDuration for testNFT to 2 days
+        singleFactoryWrapper.setCollectionMinLockDuration(
+            address(testNFT),
+            2 days
+        );
+
+        // Increase global minLockDuration to 3 days
+        singleFactoryWrapper.setLockDurations(3 days, 7 days);
+
+        // Verify that collection-specific minLockDuration is removed (reset to zero)
+        uint256 collectionMinLockDuration = singleFactoryWrapper
+            .collectionMinLockDuration(address(testNFT));
+        assertEq(collectionMinLockDuration, 0);
+
+        // Attempt to create a pair with lock duration less than new global minLockDuration
+        uint256 nftID = 104;
+        IERC721Mintable(address(testNFT)).mint(address(this), nftID);
+        testNFT.approve(address(singleFactoryWrapper), nftID);
+
+        // Expect revert due to lock duration being less than the updated global minimum
+        vm.expectRevert(
+            "Must be greater than or equal to global min lock duration"
+        );
+        singleFactoryWrapper.createPair(
+            address(testNFT),
+            address(testToken),
+            1 ether,
+            2 days,
+            nftID
+        );
     }
 }
