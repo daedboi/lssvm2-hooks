@@ -666,6 +666,11 @@ contract SudoVRFRouter is Ownable2Step, ReentrancyGuard, ERC721Holder {
         emit FeeConfigUpdated(_newFee, _newFeeRecipient);
     }
 
+    /**
+     * @notice Sets the fee for a collection.
+     * @param _nft The address of the NFT collection.
+     * @param _newFee The new fee to be set.
+     */
     function setCollectionFee(
         address _nft,
         uint256 _newFee
