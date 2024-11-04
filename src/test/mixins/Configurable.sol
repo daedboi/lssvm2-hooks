@@ -98,12 +98,14 @@ abstract contract Configurable {
     function setupSingleFactoryWrapper(
         LSSVMPairFactory factory,
         address bondingCurve,
+        address allowListHook,
         address[] memory whitelistedTokens
     ) public virtual returns (SudoSingleFactoryWrapper) {
         return
             new SudoSingleFactoryWrapper(
                 address(factory),
                 bondingCurve,
+                allowListHook,
                 0,
                 86400 * 7,
                 whitelistedTokens

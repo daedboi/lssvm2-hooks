@@ -9,6 +9,7 @@ import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import {ERC721Holder} from "@openzeppelin/contracts/token/ERC721/utils/ERC721Holder.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
 import {ILSSVMPairFactory, ILSSVMPair, ICurve} from "./Interfaces.sol";
 
@@ -54,9 +55,6 @@ contract SudoSingleFactoryWrapper is
     /// @notice Total whitelisted token count
     uint256 public whitelistedTokenCount;
 
-    /// @notice Array of collections with a specific minimum lock duration set
-    address[] public collectionsWithMinLockDuration;
-
     /// @notice Mapping to store if a token is whitelisted
     mapping(address => bool) public isWhitelistedToken;
 
@@ -65,6 +63,7 @@ contract SudoSingleFactoryWrapper is
     mapping(address => bool) public isWhitelistedCollection;
 
     /// @notice Mapping to store collection-specific minimum lock durations
+    /// @dev If a collection has a min lock duration set that is less than the new global min lock duration, it will not be used.
     mapping(address => uint256) public collectionMinLockDuration;
 
     /// @notice Mapping to store pair information
@@ -82,7 +81,7 @@ contract SudoSingleFactoryWrapper is
 
     /// @notice Struct to store pair information
     struct PairInfo {
-        uint256 pairUnlockTime; // Timestamp when the pair will be unlocked
+        uint256 pairUnlockTime; // Timestamp when the pair will be unlocked, 0 if unlocked
         address pairCreator; // Address of the pair creator
         bool hasWithdrawn; // Whether the pair has been withdrawn from
     }
@@ -119,6 +118,7 @@ contract SudoSingleFactoryWrapper is
     /**
      * @param _factory Address of the LSSVMPairFactory.
      * @param _bondingCurve Address of the bonding curve.
+     * @param _allowListHook Address of the AllowListHook.
      * @param _minLockDuration Minimum lock duration for a pair.
      * @param _maxLockDuration Maximum lock duration for a pair.
      * @param _whitelistedTokens Array of all whitelisted tokens.
@@ -126,13 +126,16 @@ contract SudoSingleFactoryWrapper is
     constructor(
         address _factory,
         address _bondingCurve,
+        address _allowListHook,
         uint256 _minLockDuration,
         uint256 _maxLockDuration,
         address[] memory _whitelistedTokens
     ) {
         require(
-            _factory != address(0) && _bondingCurve != address(0),
-            "Invalid factory or bonding curve address"
+            _factory != address(0) &&
+                _bondingCurve != address(0) &&
+                _allowListHook != address(0),
+            "Invalid factory, bonding curve, or allow list hook address"
         );
         require(
             _minLockDuration < _maxLockDuration,
@@ -140,7 +143,7 @@ contract SudoSingleFactoryWrapper is
         );
         require(
             _maxLockDuration <= MAX_LOCK_DURATION,
-            "Maximum lock duration too long"
+            "Invalid maximum lock duration"
         );
         for (uint256 i = 0; i < _whitelistedTokens.length; ) {
             require(
@@ -156,6 +159,7 @@ contract SudoSingleFactoryWrapper is
 
         factory = ILSSVMPairFactory(payable(_factory));
         bondingCurve = ICurve(_bondingCurve);
+        allowListHook = _allowListHook;
         minLockDuration = _minLockDuration;
         maxLockDuration = _maxLockDuration;
         whitelistedTokenCount = _whitelistedTokens.length;
@@ -192,17 +196,11 @@ contract SudoSingleFactoryWrapper is
             _lockDuration <= maxLockDuration,
             "Must be less than max lock duration"
         );
-        if (collectionMinLockDuration[_nft] > 0) {
-            require(
-                _lockDuration >= collectionMinLockDuration[_nft],
-                "Must be greater than or equal to collection min lock duration"
-            );
-        } else {
-            require(
-                _lockDuration >= minLockDuration,
-                "Must be greater than or equal to global min lock duration"
-            );
-        }
+        require(
+            _lockDuration >=
+                Math.max(collectionMinLockDuration[_nft], minLockDuration),
+            "Must be greater than or equal to collection min lock duration or global min lock duration"
+        );
 
         // Check if NFT is ERC721-compatible or whitelisted
         if (
@@ -370,12 +368,13 @@ contract SudoSingleFactoryWrapper is
         require(_collection != address(0), "Invalid collection address");
 
         isWhitelistedCollection[_collection] = _isAdd;
+
         emit WhitelistedCollectionsUpdated(_collection, _isAdd);
     }
 
     /**
      * @notice Updates the global minimum and maximum lock duration.
-     * @dev If a collection has a min lock duration set that is less than the new global min lock duration, it will be removed.
+     * @dev If a collection has a min lock duration set that is less than the new global min lock duration, it will not be used.
      * @param _newMinLockDuration The new minimum lock duration.
      * @param _newMaxLockDuration The new maximum lock duration.
      */
@@ -392,35 +391,15 @@ contract SudoSingleFactoryWrapper is
             "Invalid maximum lock duration"
         );
 
-        for (uint256 i = 0; i < collectionsWithMinLockDuration.length; ) {
-            if (
-                collectionMinLockDuration[collectionsWithMinLockDuration[i]] <=
-                _newMinLockDuration
-            ) {
-                collectionMinLockDuration[
-                    collectionsWithMinLockDuration[i]
-                ] = 0;
-                collectionsWithMinLockDuration[
-                    i
-                ] = collectionsWithMinLockDuration[
-                    collectionsWithMinLockDuration.length - 1
-                ];
-                collectionsWithMinLockDuration.pop();
-            }
-
-            unchecked {
-                ++i;
-            }
-        }
-
         minLockDuration = _newMinLockDuration;
         maxLockDuration = _newMaxLockDuration;
+
         emit LockDurationsUpdated(_newMinLockDuration, _newMaxLockDuration);
     }
 
     /**
      * @notice Updates the minimum lock duration for a specific collection.
-     * @dev Must be greater than the global minimum lock duration and less than the global maximum lock duration.
+     * @dev Should be greater than the global minimum lock duration and less than the global maximum lock duration, otherwise it will not be used.
      * @param _collection Address of the collection.
      * @param _minLockDuration The new minimum lock duration.
      */
@@ -429,32 +408,13 @@ contract SudoSingleFactoryWrapper is
         uint256 _minLockDuration
     ) external onlyOwner {
         require(_collection != address(0), "Invalid collection address");
-        if (_minLockDuration == 0) {
-            collectionMinLockDuration[_collection] = 0;
-            for (uint256 i = 0; i < collectionsWithMinLockDuration.length; ) {
-                if (collectionsWithMinLockDuration[i] == _collection) {
-                    collectionsWithMinLockDuration[
-                        i
-                    ] = collectionsWithMinLockDuration[
-                        collectionsWithMinLockDuration.length - 1
-                    ];
-                    collectionsWithMinLockDuration.pop();
-                }
+        require(
+            _minLockDuration > minLockDuration &&
+                _minLockDuration < maxLockDuration,
+            "Invalid min lock duration"
+        );
 
-                unchecked {
-                    ++i;
-                }
-            }
-        } else {
-            require(
-                _minLockDuration > minLockDuration &&
-                    _minLockDuration < maxLockDuration,
-                "Invalid min lock duration"
-            );
-
-            collectionMinLockDuration[_collection] = _minLockDuration;
-            collectionsWithMinLockDuration.push(_collection);
-        }
+        collectionMinLockDuration[_collection] = _minLockDuration;
 
         emit CollectionMinLockDurationUpdated(_collection, _minLockDuration);
     }
@@ -515,7 +475,7 @@ contract SudoSingleFactoryWrapper is
     }
 
     /**
-     * @notice Finalizes the pair creation by setting up allow lists and approvals.
+     * @notice Finalizes the pair creation by storing the pair info.
      * @param _sender Address that created the pair.
      * @param _pair The newly created LSSVMPair.
      * @param _lockDuration Duration for which the pair is locked.
@@ -525,16 +485,20 @@ contract SudoSingleFactoryWrapper is
         ILSSVMPair _pair,
         uint256 _lockDuration
     ) internal {
-        // Set the address, unlock time, creator, and withdrawal status for the pair
         uint256 unlockTime = _lockDuration == 0
-            ? 0
+            ? 0 // 0 means the pair has no lock duration
             : block.timestamp + _lockDuration;
+
+        // Store pair info
         pairInfo[address(_pair)] = PairInfo({
             pairUnlockTime: unlockTime,
             pairCreator: _sender,
             hasWithdrawn: false
         });
+
+        // Store pair address for creator
         pairsByCreator[_sender].push(address(_pair));
+        // Mark pair as created by this factory wrapper
         isPair[address(_pair)] = true;
 
         emit PairCreated(address(_pair), _sender, unlockTime);

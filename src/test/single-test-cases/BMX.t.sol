@@ -92,6 +92,7 @@ contract BMXContractsTest is
         singleFactoryWrapper = setupSingleFactoryWrapper(
             pairFactory,
             address(bondingCurve),
+            address(1), // placeholder
             whitelistedTokens
         );
 
@@ -535,7 +536,7 @@ contract BMXContractsTest is
         testNFT.approve(address(singleFactoryWrapper), nftID);
 
         vm.expectRevert(
-            "Must be greater than or equal to collection min lock duration"
+            "Must be greater than or equal to collection min lock duration or global min lock duration"
         );
         singleFactoryWrapper.createPair(
             address(testNFT),
@@ -601,7 +602,7 @@ contract BMXContractsTest is
 
         // Expect revert due to lock duration being less than the updated global minimum
         vm.expectRevert(
-            "Must be greater than or equal to global min lock duration"
+            "Must be greater than or equal to collection min lock duration or global min lock duration"
         );
         singleFactoryWrapper.createPair(
             address(testNFT),
