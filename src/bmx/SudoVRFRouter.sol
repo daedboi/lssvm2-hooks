@@ -576,6 +576,7 @@ contract SudoVRFRouter is Ownable2Step, ReentrancyGuard, ERC721Holder {
     {
         ILSSVMPair pair = ILSSVMPair(_pair);
 
+        // When getting the quote, we use 1 as the assetId since not all collections have a 0 index
         if (_isBuy) {
             (
                 ,
@@ -584,7 +585,7 @@ contract SudoVRFRouter is Ownable2Step, ReentrancyGuard, ERC721Holder {
                 uint256 priceWithoutWrapperFee,
                 uint256 _sudoswapFee,
                 uint256 _royaltyAmount
-            ) = pair.getBuyNFTQuote(0, _nftAmount);
+            ) = pair.getBuyNFTQuote(1, _nftAmount);
 
             uint256 amountExcludingFees = priceWithoutWrapperFee -
                 _sudoswapFee -
@@ -608,7 +609,7 @@ contract SudoVRFRouter is Ownable2Step, ReentrancyGuard, ERC721Holder {
                 uint256 totalAmountReceived,
                 uint256 _sudoswapFee,
                 uint256 _royaltyAmount
-            ) = pair.getSellNFTQuote(0, _nftAmount);
+            ) = pair.getSellNFTQuote(1, _nftAmount);
 
             uint256 amountExcludingFees = totalAmountReceived +
                 _sudoswapFee +
