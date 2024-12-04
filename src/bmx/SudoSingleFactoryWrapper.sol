@@ -409,7 +409,7 @@ contract SudoSingleFactoryWrapper is
     ) external onlyOwner {
         require(_collection != address(0), "Invalid collection address");
         require(
-            _minLockDuration > minLockDuration &&
+            _minLockDuration >= minLockDuration &&
                 _minLockDuration < maxLockDuration,
             "Invalid min lock duration"
         );
