@@ -37,6 +37,9 @@ contract SudoVRFRouter is Ownable2Step, ReentrancyGuard, ERC721Holder {
     /// @notice SudoSingleFactoryWrapper contract instance
     ISudoFactoryWrapper public immutable singleFactoryWrapper;
 
+    /// @notice SudoSingleFactoryWrapper contract instance for veAERO
+    ISudoFactoryWrapper public immutable veAeroSingleFactoryWrapper;
+
     // =========================================
     // State Variables
     // =========================================
@@ -129,13 +132,15 @@ contract SudoVRFRouter is Ownable2Step, ReentrancyGuard, ERC721Holder {
         uint256 _fee,
         address _feeRecipient,
         address _factoryWrapper,
-        address _singleFactoryWrapper
+        address _singleFactoryWrapper,
+        address _veAeroSingleFactoryWrapper
     ) {
         require(
             _vrfConsumer != address(0) &&
                 _feeRecipient != address(0) &&
                 _factoryWrapper != address(0) &&
-                _singleFactoryWrapper != address(0),
+                _singleFactoryWrapper != address(0) &&
+                _veAeroSingleFactoryWrapper != address(0),
             "Invalid addresses"
         );
         require(_fee <= MAX_FEE, "Wrapper fee cannot be greater than 5%");
@@ -145,6 +150,9 @@ contract SudoVRFRouter is Ownable2Step, ReentrancyGuard, ERC721Holder {
         feeRecipient = _feeRecipient;
         factoryWrapper = ISudoFactoryWrapper(_factoryWrapper);
         singleFactoryWrapper = ISudoFactoryWrapper(_singleFactoryWrapper);
+        veAeroSingleFactoryWrapper = ISudoFactoryWrapper(
+            _veAeroSingleFactoryWrapper
+        );
     }
 
     receive() external payable {
@@ -409,14 +417,20 @@ contract SudoVRFRouter is Ownable2Step, ReentrancyGuard, ERC721Holder {
         uint256 _nftId,
         uint256 _maxExpectedTokenInput
     ) external nonReentrant {
-        require(
-            singleFactoryWrapper.isPair(_pair),
-            "Pair is not a single-asset pair"
-        );
+        // Initial checks
+        uint256 unlockTime;
+        if (veAeroSingleFactoryWrapper.isPair(_pair)) {
+            unlockTime = veAeroSingleFactoryWrapper.getUnlockTime(_pair);
+        } else {
+            require(
+                singleFactoryWrapper.isPair(_pair),
+                "Not a single-asset pair"
+            );
+            unlockTime = singleFactoryWrapper.getUnlockTime(_pair);
+        }
         require(_maxExpectedTokenInput > 0, "Invalid _maxExpectedTokenInput");
         require(
-            block.timestamp < singleFactoryWrapper.getUnlockTime(_pair) ||
-                singleFactoryWrapper.getUnlockTime(_pair) == 0,
+            block.timestamp < unlockTime || unlockTime == 0,
             "Can only buy before pair is unlocked or from initially unlocked pair"
         );
 
