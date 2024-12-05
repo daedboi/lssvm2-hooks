@@ -45,19 +45,22 @@ contract BMXContractsTest is
     AllowListHook public hook;
     SudoFactoryWrapper public factoryWrapper;
     SudoSingleFactoryWrapper public singleFactoryWrapper;
+    SudoSingleFactoryWrapper public veAeroSingleFactoryWrapper;
     SudoVRFRouter public sudoVRFRouter;
     LSSVMPairFactory public pairFactory;
     ICurve public bondingCurve;
     IERC721 public testNFT;
+    IERC721 public testVeAeroNFT;
     ERC20 public testToken;
     LSSVMPair public buyPair;
     LSSVMPair public sellPair;
     LSSVMPair public singleAssetPair;
+    LSSVMPair public veAeroSingleAssetPair;
     RoyaltyEngine royaltyEngine;
     MockVRFConsumer public vrfConsumer;
 
     function setUp() public {
-        // Deploy ERC721 token and mint NFTs
+        // Deploy ERC721 tokens and mint NFTs
         testNFT = setup721();
         IERC721Mintable(address(testNFT)).mint(address(this), 0);
         IERC721Mintable(address(testNFT)).mint(address(this), 1);
@@ -65,6 +68,9 @@ contract BMXContractsTest is
         uint256[] memory ids = new uint256[](2);
         ids[0] = 0;
         ids[1] = 1;
+
+        testVeAeroNFT = setup721();
+        IERC721Mintable(address(testVeAeroNFT)).mint(address(this), 0);
 
         // Deploy ERC20 token and mint tokens
         testToken = new Test20();
@@ -95,6 +101,12 @@ contract BMXContractsTest is
             address(1), // placeholder
             whitelistedTokens
         );
+        veAeroSingleFactoryWrapper = setupSingleFactoryWrapper(
+            pairFactory,
+            address(bondingCurve),
+            address(1), // placeholder
+            whitelistedTokens
+        );
 
         // Deploy VRFConsumer
         vrfConsumer = new MockVRFConsumer();
@@ -103,6 +115,7 @@ contract BMXContractsTest is
         sudoVRFRouter = setupSudoVRFRouter(
             address(factoryWrapper),
             address(singleFactoryWrapper),
+            address(veAeroSingleFactoryWrapper),
             address(vrfConsumer), // VRFConsumer address (mocked)
             address(1337) // Fee recipient
         );
@@ -122,6 +135,7 @@ contract BMXContractsTest is
         // Set AllowListHook in factory wrapper and singleFactoryWrapper
         factoryWrapper.setAllowListHook(address(hook));
         singleFactoryWrapper.setAllowListHook(address(hook));
+        veAeroSingleFactoryWrapper.setAllowListHook(address(hook));
 
         // Set SudoVRFRouter in factory wrapper
         factoryWrapper.updateSudoVRFRouterConfig(address(sudoVRFRouter), 0, 0);
@@ -135,6 +149,10 @@ contract BMXContractsTest is
         testToken.approve(address(factoryWrapper), initialTokenBalance);
         testNFT.setApprovalForAll(address(factoryWrapper), true);
         testNFT.approve(address(singleFactoryWrapper), 2);
+        testVeAeroNFT.setApprovalForAll(
+            address(veAeroSingleFactoryWrapper),
+            true
+        );
 
         // Create buy pair via factory wrapper
         buyPair = LSSVMPair(
@@ -174,6 +192,17 @@ contract BMXContractsTest is
                 spotPrice,
                 0,
                 2
+            )
+        );
+
+        // Create a veAero single asset pair via veAeroSingleFactoryWrapper
+        veAeroSingleAssetPair = LSSVMPair(
+            veAeroSingleFactoryWrapper.createPair(
+                address(testVeAeroNFT),
+                address(testToken),
+                spotPrice,
+                0,
+                0
             )
         );
     }
@@ -292,6 +321,27 @@ contract BMXContractsTest is
 
         // Verify that Alice owns the NFT
         assertEq(testNFT.ownerOf(2), alice);
+        // Verify that Alice paid the correct collection fee
+        assertEq(testToken.balanceOf(address(1337)), 10000000000000000);
+        // Verify that Alice is left with 0.49 ether
+        assertEq(testToken.balanceOf(alice), 490000000000000000);
+    }
+
+    function test_buyVeAeroSingleAssetNFTsAuthorizedRecipientSucceeds() public {
+        // Alice buys single veAero NFT through SudoVRFRouter
+        address alice = address(1);
+        IMintable(address(testToken)).mint(alice, 1.5 ether);
+        vm.startPrank(alice);
+        testToken.approve(address(sudoVRFRouter), 1.5 ether);
+        sudoVRFRouter.buySingleNFT(
+            address(veAeroSingleAssetPair),
+            0,
+            1.5 ether
+        );
+        vm.stopPrank();
+
+        // Verify that Alice owns the NFT
+        assertEq(testVeAeroNFT.ownerOf(0), alice);
         // Verify that Alice paid the correct collection fee
         assertEq(testToken.balanceOf(address(1337)), 10000000000000000);
         // Verify that Alice is left with 0.49 ether

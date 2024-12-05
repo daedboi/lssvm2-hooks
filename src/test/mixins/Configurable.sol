@@ -115,6 +115,7 @@ abstract contract Configurable {
     function setupSudoVRFRouter(
         address factoryWrapperAddress,
         address singleFactoryWrapperAddress,
+        address veAeroSingleFactoryWrapperAddress,
         address vrfConsumerAddress,
         address feeRecipient
     ) public virtual returns (SudoVRFRouter) {
@@ -124,7 +125,8 @@ abstract contract Configurable {
                 14000000000000000,
                 feeRecipient,
                 factoryWrapperAddress,
-                singleFactoryWrapperAddress
+                singleFactoryWrapperAddress,
+                veAeroSingleFactoryWrapperAddress
             );
     }
 
